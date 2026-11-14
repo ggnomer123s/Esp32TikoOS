@@ -24,7 +24,16 @@ Dependency Graph
 |-- SD @ 2.0.0
 |-- Preferences @ 2.0.0
 Building in release mode
+Compiling .pio/build/tiko/src/input/InputManager.cpp.o
+Compiling .pio/build/tiko/src/main.cpp.o
+Compiling .pio/build/tiko/src/network/USBTransferApp.cpp.o
 Compiling .pio/build/tiko/src/ui/ScreenManager.cpp.o
+In file included from src/network/../storage/StorageManager.h:5,
+                 from src/network/USBTransferApp.h:2,
+                 from src/network/USBTransferApp.cpp:1:
+.pio/libdeps/tiko/TFT_eSPI/TFT_eSPI.h:973:8: warning: #warning >>>>------>> TOUCH_CS pin not defined, TFT_eSPI touch functions will not be available! [-Wcpp]
+       #warning >>>>------>> TOUCH_CS pin not defined, TFT_eSPI touch functions will not be available!
+        ^~~~~~~
 In file included from src/ui/../apps/../display/DisplayManager.h:3,
                  from src/ui/../apps/Reader.h:2,
                  from src/ui/ScreenManager.h:2,
@@ -32,15 +41,22 @@ In file included from src/ui/../apps/../display/DisplayManager.h:3,
 .pio/libdeps/tiko/TFT_eSPI/TFT_eSPI.h:973:8: warning: #warning >>>>------>> TOUCH_CS pin not defined, TFT_eSPI touch functions will not be available! [-Wcpp]
        #warning >>>>------>> TOUCH_CS pin not defined, TFT_eSPI touch functions will not be available!
         ^~~~~~~
+In file included from src/ui/../apps/../display/DisplayManager.h:3,
+                 from src/ui/../apps/Reader.h:2,
+                 from src/ui/ScreenManager.h:2,
+                 from src/main.cpp:1:
+.pio/libdeps/tiko/TFT_eSPI/TFT_eSPI.h:973:8: warning: #warning >>>>------>> TOUCH_CS pin not defined, TFT_eSPI touch functions will not be available! [-Wcpp]
+       #warning >>>>------>> TOUCH_CS pin not defined, TFT_eSPI touch functions will not be available!
+        ^~~~~~~
 Linking .pio/build/tiko/firmware.elf
 Retrieving maximum program size .pio/build/tiko/firmware.elf
 Checking size .pio/build/tiko/firmware.elf
 Advanced Memory Usage is available via "PlatformIO Home > Project Inspect"
-RAM:   [=         ]  14.5% (used 47420 bytes from 327680 bytes)
-Flash: [==        ]  22.0% (used 924497 bytes from 4194304 bytes)
+RAM:   [==        ]  18.4% (used 60348 bytes from 327680 bytes)
+Flash: [==        ]  23.1% (used 968793 bytes from 4194304 bytes)
 Building .pio/build/tiko/firmware.bin
 esptool.py v4.11.0
 Creating esp32s3 image...
 Merged 2 ELF sections
 Successfully created esp32s3 image.
-========================= [SUCCESS] Took 8.17 seconds =========================
+========================= [SUCCESS] Took 10.76 seconds =========================

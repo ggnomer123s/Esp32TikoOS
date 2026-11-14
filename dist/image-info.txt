@@ -1,10 +1,10 @@
 esptool.py v4.11.0
-File size: 924864 (bytes)
+File size: 969152 (bytes)
 
 ESP32S3 image header
 ====================
 Image version: 1
-Entry point: 0x40377740
+Entry point: 0x403776ec
 Segments: 5
 Flash size: 16MB
 Flash freq: 80m
@@ -22,23 +22,23 @@ Segments information
 ====================
 Segment   Length   Load addr   File offs  Memory types
 -------  -------  ----------  ----------  ------------
-      0  0x2ba68  0x3c0a0020  0x00000018  DROM
-      1  0x04588  0x3fc95600  0x0002ba88  BYTE_ACCESSIBLE, MEM_INTERNAL, DRAM
-      2  0x9f340  0x42000020  0x00030018  IROM
-      3  0x0132c  0x3fc99b88  0x000cf360  BYTE_ACCESSIBLE, MEM_INTERNAL, DRAM
-      4  0x115f8  0x40374000  0x000d0694  MEM_INTERNAL, IRAM
+      0  0x2d554  0x3c0b0020  0x00000018  DROM
+      1  0x02a9c  0x3fc95510  0x0002d574  BYTE_ACCESSIBLE, MEM_INTERNAL, DRAM
+      2  0xa845c  0x42000020  0x00030018  IROM
+      3  0x03008  0x3fc97fac  0x000d847c  BYTE_ACCESSIBLE, MEM_INTERNAL, DRAM
+      4  0x11508  0x40374000  0x000db48c  MEM_INTERNAL, IRAM
 
 ESP32S3 image footer
 ====================
-Checksum: 0xd0 (valid)
-Validation hash: 33a6ac206739abcee56e388581f0f2ca6f6e41daefbf21e3f4eb00c67eab01d4 (valid)
+Checksum: 0x81 (valid)
+Validation hash: e465bf27144ca94f45750db2daed24574ac5db54004007bd2543dfe7516cb142 (valid)
 
 Application information
 =======================
 Project name: arduino-lib-builder
 App version: esp-idf: v4.4.7 38eeba213a
 Compile time: Mar  5 2024 12:12:53
-ELF file SHA256: e615601c899255f888be9a503fc583ff22dbcc23c28a3a8f7b1774017648d39e
+ELF file SHA256: 9382f1f71a402f3a0a5af9d393892d656e433cb0b08711210883b87d6c642fa1
 ESP-IDF: v4.4.7-dirty
 Minimal eFuse block revision: 0.0
 Maximal eFuse block revision: 0.0

@@ -48,12 +48,20 @@ void DisplayManager::text(const String &s, int x, int y, uint16_t color, int siz
         Glyph g = glyph(cp, size);
         if (x + g.width > right)
             break;
-        for (int yy = 0; yy < h; yy++)
-            for (int xx = 0; xx < g.width; xx++) {
+        const auto *data = pixels(size) + g.offset;
+        for (int yy = 0; yy < h; yy++) {
+            int start = -1;
+            for (int xx = 0; xx <= g.width; xx++) {
                 int bit = yy * g.width + xx;
-                if (pgm_read_byte(pixels(size) + g.offset + bit / 8) & (0x80 >> (bit % 8)))
-                    canvas.drawPixel(x + xx, y + yy, color);
+                bool on = xx < g.width && (pgm_read_byte(data + bit / 8) & (0x80 >> (bit % 8)));
+                if (on && start < 0)
+                    start = xx;
+                if (!on && start >= 0) {
+                    canvas.drawFastHLine(x + start, y + yy, xx - start, color);
+                    start = -1;
+                }
             }
+        }
         x += g.width;
     }
 }
@@ -89,8 +97,34 @@ std::vector<String> DisplayManager::wrapText(const String &s, int size) {
 void DisplayManager::boot(int stage) {
     clear();
     text("TikoOS", 85, 35, accent, 2);
-    text("v0.1", 135, 75, fg);
+    text("v0.2", 135, 75, fg);
     for (int i = 0; i < stage; i++)
         canvas.fillRoundRect(30 + i * 65, 118, 52, 4, 2, accent);
     show();
+}
+
+void DisplayManager::show() {
+    // Only changed row bands cross the shared SPI bus; sprite stores byte-swapped RGB565.
+    auto *data = static_cast<uint16_t *>(canvas.getPointer());
+    int begin = -1;
+    tft.startWrite();
+    for (int y = 0; y <= 170; y++) {
+        bool changed = false;
+        if (y < 170) {
+            uint32_t hash = 2166136261u;
+            auto *row = data + y * 320;
+            for (int x = 0; x < 320; x++)
+                hash = (hash ^ row[x]) * 16777619u;
+            changed = firstFrame || hash != previous[y];
+            previous[y] = hash;
+        }
+        if (changed && begin < 0)
+            begin = y;
+        if (!changed && begin >= 0) {
+            tft.pushImage(0, begin, 320, y - begin, data + begin * 320);
+            begin = -1;
+        }
+    }
+    tft.endWrite();
+    firstFrame = false;
 }

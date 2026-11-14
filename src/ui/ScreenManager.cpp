@@ -8,6 +8,8 @@ void ScreenManager::menu(const String &title, const std::vector<String> &items) 
     for (int i = start; i < int(items.size()) && i < start + 4; i++) {
         int y = 27 + (i - start) * 29;
         display.card(y, i == selected);
+        if (i == selected && settings.value.animations)
+            display.marker(y + 26, std::min<uint32_t>(120, millis() - lastInput) * 310 / 120);
         display.text(items[i], 12, y + 4, i == selected ? 0x0000 : display.fg);
     }
     display.text(String(selected + 1) + "/" + String(items.size()) + "   Rotate · Click · Back", 8,
@@ -28,9 +30,10 @@ void ScreenManager::back() {
     case Reader:
         selected = 0;
         reader.close();
-        if (browseRoot == "favorites")
+        if (browseRoot == "favorites") {
+            refreshFavorites();
             screen = Favorites;
-        else
+        } else
             browse(directory);
         break;
     case Browser:
@@ -46,9 +49,24 @@ void ScreenManager::back() {
         screen = Browser;
         selected = 0;
         break;
+    case NetworkMenu:
+    case WiFiList:
+        wifi.stop();
+        scanning = false;
+        screen = Home;
+        selected = 0;
+        break;
+    case KeyboardScreen:
+        screen = (purpose == NoteName || purpose == NoteBody) ? Browser : NetworkMenu;
+        selected = 0;
+        break;
+    case USBConfirm:
+        screen = Home;
+        selected = 0;
+        break;
     case Transfer:
         wifi.stop();
-        screen = Home;
+        screen = NetworkMenu;
         selected = 0;
         break;
     case Calculator:
@@ -93,8 +111,8 @@ void ScreenManager::setting() {
         v.animations = !v.animations;
         break;
     case 7:
-        wifi.begin();
-        screen = Transfer;
+        screen = NetworkMenu;
+        selected = 0;
         break;
     case 8:
         screen = Info;
@@ -123,6 +141,7 @@ void ScreenManager::activate() {
             browse(browseRoot);
             break;
         case 2:
+            refreshFavorites();
             screen = Favorites;
             selected = 0;
             break;
@@ -131,8 +150,8 @@ void ScreenManager::activate() {
             browse("/");
             break;
         case 4:
-            wifi.begin();
-            screen = Transfer;
+            screen = NetworkMenu;
+            selected = 0;
             break;
         case 5:
             screen = Tools;
@@ -144,26 +163,39 @@ void ScreenManager::activate() {
             break;
         case 7:
             screen = Info;
+            selected = 0;
+            break;
+        case 8:
+            screen = USBConfirm;
+            selected = 0;
             break;
         }
         break;
-    case Browser:
-        if (entries.empty())
+    case Browser: {
+        if (noteCreation() && selected == 0) {
+            noteFolder = directory;
+            startKeyboard(NoteName);
             break;
-        if (entries[selected].directory)
-            browse(entries[selected].path);
-        else if (entries[selected].path.endsWith(".txt")) {
-            if (reader.open(entries[selected].path)) {
+        }
+        int index = selected - (noteCreation() ? 1 : 0);
+        if (index < 0 || index >= int(entries.size()))
+            break;
+        auto entry = entries[index];
+        if (entry.directory)
+            browse(entry.path);
+        else if (entry.path.endsWith(".txt")) {
+            if (reader.open(entry.path)) {
                 screen = Reader;
                 selected = 0;
             } else
                 message = "Ошибка чтения";
         } else {
-            deletePath = entries[selected].path;
+            deletePath = entry.path;
             screen = FileActions;
             selected = 0;
         }
         break;
+    }
     case FileActions:
         if (selected == 0) {
             if (tiko::safePath(deletePath.c_str())) {
@@ -238,6 +270,49 @@ void ScreenManager::activate() {
         else
             tools.reset();
         break;
+    case NetworkMenu:
+        if (selected == 0 || selected == 1) {
+            wifi.begin(selected == 1);
+            screen = Transfer;
+            selected = 0;
+        } else if (selected == 2) {
+            wifi.scan();
+            networks.clear();
+            scanning = true;
+            scanStarted = millis();
+            screen = WiFiList;
+            selected = 0;
+        } else
+            startKeyboard(APPassword);
+        break;
+    case WiFiList:
+        if (selected == 0)
+            startKeyboard(SSID);
+        else if (selected <= int(networks.size())) {
+            pendingSSID = networks[selected - 1];
+            startKeyboard(STAPassword);
+        }
+        break;
+    case KeyboardScreen: {
+        int result = keyboard.model.click();
+        keyboard.error = "";
+        if (result == 1)
+            finishKeyboard();
+        else if (result == 2)
+            back();
+        else if (result < 0)
+            keyboard.error = "Достигнут лимит";
+        break;
+    }
+    case USBConfirm:
+        if (selected == 1) {
+            reader.close();
+            wifi.stop();
+            screen = USBTransfer;
+            usbPending = true;
+        } else
+            back();
+        break;
     case Settings:
         setting();
         break;
@@ -274,10 +349,12 @@ void ScreenManager::render() {
     case Home:
         menu("TikoOS · SD " + String(storage.ready ? "OK" : "--") + " · BAT ?",
              {"Notes", "Formulas", "Favorites", "Files", "Wi-Fi Transfer", "Tools", "Settings",
-              "Device Info"});
+              "Device Info", "USB Transfer"});
         break;
     case Browser: {
         std::vector<String> names;
+        if (noteCreation())
+            names.push_back("+ Новая заметка");
         for (auto &e : entries)
             names.push_back(String(e.directory ? "[+] " : "") + e.name +
                             String(e.directory ? "" : "  " + String(e.size) + " B"));
@@ -289,9 +366,7 @@ void ScreenManager::render() {
         break;
     }
     case Favorites: {
-        std::vector<String> names;
-        for (auto &p : favorites.paths)
-            names.push_back(String(SD.exists(p) ? "" : "[нет] ") + filename(p));
+        auto names = favoriteLabels;
         if (names.empty())
             names.push_back("Избранное пусто / Back");
         menu("Favorites", names);
@@ -305,12 +380,37 @@ void ScreenManager::render() {
         menu("Документ", {favorites.contains(reader.path) ? "Убрать из избранного" : "В избранное",
                           "Размер шрифта", "Удалить файл...", "Закрыть документ"});
         break;
+    case NetworkMenu:
+        menu("Wi-Fi Transfer", {"AP: точка TikoOS", "My network: " + settings.get("sta-ssid"),
+                                "Подключить Wi-Fi...", "Пароль AP / WebUI..."});
+        break;
+    case WiFiList: {
+        auto names = networks;
+        names.insert(names.begin(), "Ввести SSID вручную...");
+        menu(scanning ? "Поиск Wi-Fi..." : "Выберите сеть", names);
+        break;
+    }
+    case KeyboardScreen:
+        keyboard.render(display);
+        break;
+    case USBConfirm:
+        menu("USB: доступ ко всей карте", {"Отмена", "Подключить USB-диск"});
+        display.text("Сначала закройте файлы на ПК", 8, 113, display.fg);
+        break;
+    case USBTransfer:
+        display.text("USB microSD", 8, 3, display.accent);
+        display.text("Карта доступна компьютеру", 8, 35, display.fg);
+        display.text("Файлы открывайте на ПК", 8, 60, display.fg);
+        display.text("Безопасно извлеките диск", 8, 90, display.accent);
+        display.text("После Eject: перезагрузка", 8, 118, display.fg);
+        display.text("Не отключайте при записи", 8, 147, display.fg);
+        break;
     case Transfer:
         display.text("Wi-Fi Transfer", 8, 3, display.accent);
-        display.text(wifi.active ? "AP: TikoOS" : "AP не запущен", 8, 30, display.fg);
-        display.text("Пароль: " + wifi.password, 8, 53, display.fg);
+        display.text(wifi.connected() ? "My network" : "AP / подключение", 8, 30, display.fg);
+        display.text("Пароль Web: " + wifi.password, 8, 53, display.fg);
         display.text(wifi.status, 8, 76, display.accent);
-        display.text("Web login: tiko / пароль AP", 8, 101, display.fg);
+        display.text("Web login: tiko", 8, 101, display.fg);
         display.text("Back: выключить Wi-Fi", 8, 135, display.fg);
         break;
     case Tools:
@@ -354,15 +454,16 @@ void ScreenManager::render() {
                                     String("BQ25896: ") + (hardware.charger ? "ACK" : "no ACK"),
                                     "CC1101 / nRF24: not probed",
                                     "IR / RGB: inactive",
-                                    "TikoOS v0.1 · About"};
+                                    "TikoOS v0.2 · About"};
         menu(screen == Info ? "Device Info" : "System Monitor", info);
         break;
     }
     case Diagnostics: {
+        auto raw = input.snapshot();
         menu("Encoder raw",
-             {"Transitions: " + String(input.decoder.transitions),
-              "Invalid: " + String(input.decoder.invalid), "Steps: " + String(input.decoder.steps),
-              "Direction: " + String(input.decoder.last), "GPIO0 click / GPIO6 back"});
+             {"Transitions: " + String(raw.transitions), "Invalid: " + String(raw.invalid),
+              "Steps: " + String(raw.steps), "Direction: " + String(raw.last),
+              "Queue drops: " + String(input.overflows.load()), "GPIO0 click / GPIO6 back"});
         break;
     }
     case Settings:
@@ -370,7 +471,7 @@ void ScreenManager::render() {
              {"Brightness: " + String(v.brightness), "Font: " + String(v.font + 1),
               "Accent: " + String(v.accent + 1), String("Reverse: ") + (v.reverse ? "on" : "off"),
               "Detents/step: " + String(v.sensitivity), "Timeout: " + String(v.timeout) + " s",
-              String("Animations: ") + (v.animations ? "on" : "off"), "Wi-Fi: новый пароль / AP",
+              String("Animations: ") + (v.animations ? "on" : "off"), "Wi-Fi / подключение...",
               "About TikoOS", "Reset settings..."});
         break;
     case FileActions:
@@ -389,104 +490,262 @@ void ScreenManager::render() {
     lastDraw = millis();
     dirty = false;
 }
-void ScreenManager::loop() {
-    wifi.loop();
-    auto e = input.poll();
-    bool activity = e.turn || e.click || e.back;
-    if (activity) {
-        lastInput = millis();
-        if (asleep) {
-            asleep = false;
-            display.brightness(settings.value.brightness);
-            return;
+void ScreenManager::rotate(int amount) {
+    int t = settings.value.reverse ? -amount : amount;
+    substeps += t;
+    t = substeps / settings.value.sensitivity;
+    substeps %= settings.value.sensitivity;
+    if (!t)
+        return;
+    if (screen == Reader)
+        reader.turn(t);
+    else if (screen == Calculator)
+        calcKey = tiko::wrap(calcKey + t, tools.keys.length());
+    else if (screen == KeyboardScreen)
+        keyboard.model.turn(t);
+    else {
+        int count = 1;
+        switch (screen) {
+        case Home:
+            count = 9;
+            break;
+        case Browser:
+            count = entries.size() + (noteCreation() ? 1 : 0);
+            break;
+        case Favorites:
+            count = favorites.paths.size();
+            break;
+        case ReaderMenu:
+        case Tools:
+        case NetworkMenu:
+            count = 4;
+            break;
+        case Stopwatch:
+        case Confirm:
+        case FileActions:
+        case USBConfirm:
+            count = 2;
+            break;
+        case Settings:
+            count = 10;
+            break;
+        case Monitor:
+        case Info:
+            count = 13;
+            break;
+        case Diagnostics:
+            count = 6;
+            break;
+        case WiFiList:
+            count = networks.size() + 1;
+            break;
+        default:
+            break;
         }
+        selected = tiko::wrap(selected + t, count);
+    }
+}
+void ScreenManager::event(InputManager::Event e) {
+    lastInput = millis();
+    if (asleep) {
+        asleep = false;
+        display.brightness(settings.value.brightness);
     }
     Screen old = screen;
+    // Apply queued movement BEFORE click, never to the screen opened by that click.
+    rotate(e.turn);
     if (e.back)
         back();
     else if (e.click == 2) {
-        if (screen == Browser && !entries.empty() && !entries[selected].directory) {
-            deletePath = entries[selected].path;
+        int index = selected - (noteCreation() ? 1 : 0);
+        if (screen == Browser && index >= 0 && index < int(entries.size()) &&
+            !entries[index].directory) {
+            deletePath = entries[index].path;
             screen = FileActions;
             selected = 0;
         } else
             back();
     } else if (e.click == 1)
         activate();
-    if (e.turn) {
-        int t = settings.value.reverse ? -e.turn : e.turn;
-        substeps += t;
-        t = substeps / settings.value.sensitivity;
-        substeps %= settings.value.sensitivity;
-        if (screen == Reader)
-            reader.turn(t);
-        else if (screen == Calculator)
-            calcKey = tiko::wrap(calcKey + t, tools.keys.length());
-        else {
-            int count = 1;
-            switch (screen) {
-            case Home:
-                count = 8;
-                break;
-            case Browser:
-                count = entries.size();
-                break;
-            case Favorites:
-                count = favorites.paths.size();
-                break;
-            case ReaderMenu:
-                count = 4;
-                break;
-            case Tools:
-                count = 4;
-                break;
-            case Stopwatch:
-            case Confirm:
-            case FileActions:
-                count = 2;
-                break;
-            case Settings:
-                count = 10;
-                break;
-            case Monitor:
-            case Info:
-                count = 13;
-                break;
-            case Diagnostics:
-                count = 5;
-                break;
-            default:
-                break;
-            }
-            selected = tiko::wrap(selected + t, count);
-        }
-    }
-    if (old != screen) {
+    if (old != screen)
         substeps = 0;
-        if (settings.value.animations) { /* Brief fade uses PWM; never delays event processing. */
-            scrollOffset = millis();
+    dirty = true;
+}
+void ScreenManager::loop() {
+    if (usb.active || usb.ejected) {
+        while (true) {
+            auto e = input.poll();
+            if (!e.turn && !e.click && !e.back)
+                break;
         }
-    }
-    if (settings.value.animations && scrollOffset) {
-        uint32_t age = millis() - uint32_t(scrollOffset);
-        if (age < 160)
-            display.brightness(settings.value.brightness * (80 + age) / 240);
-        else {
-            scrollOffset = 0;
-            display.brightness(settings.value.brightness);
+        if (usb.ejected) {
+            delay(100);
+            ESP.restart();
         }
+        return;
     }
-    if (activity)
-        dirty = true;
-    if (screen == Stopwatch || screen == Monitor || screen == Diagnostics)
-        if (millis() - lastDraw > 150)
+    wifi.loop();
+    if (scanning) {
+        int n = WiFi.scanComplete();
+        if (n >= 0) {
+            networks.clear();
+            for (int i = 0; i < n && networks.size() < 24; i++) {
+                String ssid = WiFi.SSID(i);
+                if (ssid.length() &&
+                    std::find(networks.begin(), networks.end(), ssid) == networks.end())
+                    networks.push_back(ssid);
+            }
+            WiFi.scanDelete();
+            scanning = false;
+            selected = 0;
             dirty = true;
-    if (settings.value.timeout && millis() - lastInput > settings.value.timeout * 1000UL) {
+        } else if (millis() - scanStarted > 15000) {
+            scanning = false;
+            message = "Поиск завершён: SSID вручную";
+            dirty = true;
+        }
+    }
+    for (int i = 0; i < 32; i++) {
+        auto e = input.poll();
+        if (!e.turn && !e.click && !e.back)
+            break;
+        event(e);
+        if (usbPending)
+            break;
+    }
+    if ((screen == Stopwatch || screen == Monitor || screen == Diagnostics || screen == Transfer) &&
+        millis() - lastDraw >= 250)
+        dirty = true;
+    if (settings.value.timeout && screen != Transfer && screen != KeyboardScreen &&
+        screen != USBTransfer && millis() - lastInput > settings.value.timeout * 1000UL) {
         if (!asleep) {
             display.brightness(0);
             asleep = true;
         }
     }
-    if (dirty && !asleep)
+    if (settings.value.animations && millis() - lastInput < 120)
+        dirty = true;
+    // At most one frame every 16 ms, independent of how many events have accumulated.
+    if (dirty && !asleep && millis() - lastDraw >= 16)
         render();
+    if (usbPending && !dirty) {
+        usbPending = false;
+        if (!usb.start(storage)) {
+            screen = Home;
+            selected = 0;
+            message = "USB: нужна SD, сектор 512";
+            dirty = true;
+        }
+    }
+}
+void ScreenManager::startKeyboard(Purpose p) {
+    scanning = false;
+    purpose = p;
+    screen = KeyboardScreen;
+    selected = 0;
+    switch (p) {
+    case SSID:
+        keyboard.begin("Имя Wi-Fi (SSID)", settings.get("sta-ssid"), 32);
+        break;
+    case STAPassword:
+        keyboard.begin("Пароль Wi-Fi", "", 63, false, true);
+        break;
+    case APPassword: {
+        String value = settings.get("ap-pass");
+        keyboard.begin("Пароль AP / Web", value.length() ? value : "Tigran123456!", 63, false,
+                       true);
+        break;
+    }
+    case NoteName:
+        keyboard.begin("Название заметки", "", 80);
+        break;
+    case NoteBody:
+        keyboard.begin("Текст заметки", "", 8192, true);
+        break;
+    }
+}
+void ScreenManager::finishKeyboard() {
+    String value = keyboard.model.text.c_str();
+    switch (purpose) {
+    case SSID:
+        if (value.isEmpty()) {
+            keyboard.error = "Введите SSID";
+            return;
+        }
+        pendingSSID = value;
+        startKeyboard(STAPassword);
+        break;
+    case STAPassword:
+        if (value.length() && value.length() < 8) {
+            keyboard.error = "Пароль: 8–63 байта / пусто";
+            return;
+        }
+        settings.put("sta-ssid", pendingSSID);
+        settings.put("sta-pass", value);
+        wifi.begin(true);
+        screen = Transfer;
+        selected = 0;
+        break;
+    case APPassword:
+        if (value.length() < 8) {
+            keyboard.error = "Пароль: от 8 байт";
+            return;
+        }
+        settings.put("ap-pass", value);
+        screen = NetworkMenu;
+        selected = 0;
+        message = "Пароль AP / Web сохранён";
+        break;
+    case NoteName: {
+        if (!tiko::safeLeaf(value.c_str())) {
+            keyboard.error = "Недопустимое имя файла";
+            return;
+        }
+        if (!value.endsWith(".txt"))
+            value += ".txt";
+        String path = noteFolder + "/" + value;
+        if (!tiko::safePath(path.c_str()) || SD.exists(path)) {
+            keyboard.error = "Имя занято / слишком длинно";
+            return;
+        }
+        noteName = value;
+        startKeyboard(NoteBody);
+        break;
+    }
+    case NoteBody: {
+        if (!storage.ready) {
+            keyboard.error = "SD недоступна";
+            return;
+        }
+        String path = noteFolder + "/" + noteName;
+        if (!tiko::safePath(path.c_str()) || SD.exists(path)) {
+            keyboard.error = "Файл уже существует";
+            return;
+        }
+        if (!SD.exists("/TikoOS"))
+            SD.mkdir("/TikoOS");
+        if (!SD.exists("/TikoOS/notes"))
+            SD.mkdir("/TikoOS/notes");
+        String temp = noteFolder + "/.note-" + String(esp_random(), 16);
+        File f = SD.open(temp, FILE_WRITE);
+        if (!f) {
+            keyboard.error = "Не удалось создать файл";
+            return;
+        }
+        bool ok = f.write(reinterpret_cast<const uint8_t *>(value.c_str()), value.length()) ==
+                  value.length();
+        f.flush();
+        f.close();
+        if (ok)
+            ok = SD.rename(temp, path);
+        if (!ok) {
+            SD.remove(temp);
+            keyboard.error = "Ошибка записи / SD заполнена";
+            return;
+        }
+        browse(noteFolder);
+        message = "Заметка сохранена";
+        break;
+    }
+    }
 }

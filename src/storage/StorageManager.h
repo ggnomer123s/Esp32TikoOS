@@ -15,6 +15,7 @@ class StorageManager {
   public:
     bool ready = false;
     bool truncated = false;
+    String cachedCapacity;
     void begin() {
         ready = SD.begin(13, TFT_eSPI::getSPIinstance(), 4000000) && SD.cardType() != CARD_NONE;
     }
@@ -48,9 +49,17 @@ class StorageManager {
         return ready && tiko::safePath(p.c_str()) && SD.remove(p);
     }
     String capacity() {
-        return ready ? String((SD.totalBytes() - SD.usedBytes()) / 1048576) + " MB free / " +
-                           String(SD.totalBytes() / 1048576) + " MB"
-                     : "SD отсутствует";
+        if (cachedCapacity.length())
+            return cachedCapacity;
+        if (!ready)
+            return "SD отсутствует";
+        return String(SD.cardSize() / 1048576) + " MB SD";
+    }
+    String freeSpace() {
+        return cachedCapacity = ready
+                                    ? String((SD.totalBytes() - SD.usedBytes()) / 1048576) +
+                                          " MB free / " + String(SD.totalBytes() / 1048576) + " MB"
+                                    : "SD отсутствует";
     }
 };
 class FavoritesApp {

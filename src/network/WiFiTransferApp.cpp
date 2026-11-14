@@ -70,61 +70,84 @@ String WiFiTransferApp::path() {
         p = "/TikoOS";
     return tiko::safePath(p.c_str()) ? p : String();
 }
-void WiFiTransferApp::begin() {
+void WiFiTransferApp::begin(bool useNetwork) {
+    WiFi.persistent(false);
     stop();
-    WiFi.mode(WIFI_AP);
-    password = randomHex().substring(0, 16);
+    station = useNetwork;
+    password = settings.get("ap-pass");
+    if (password.length() < 8)
+        password = "Tigran123456!";
+    WiFi.mode(station ? WIFI_STA : WIFI_AP);
     token = randomHex();
-    active = WiFi.softAP("TikoOS", password.c_str(), 1, 0, 1);
-    if (!active) {
-        status = "AP error";
-        return;
-    }
-    const char *headers[] = {"X-Tiko-CSRF"};
-    server.collectHeaders(headers, 1);
-    server.on("/", HTTP_GET, [this] {
-        if (auth())
-            page();
-    });
-    server.on("/view", HTTP_GET, [this] {
-        if (!auth())
-            return;
-        String p = path();
-        File f = storage.ready && p.length() ? SD.open(p) : File();
-        if (!f || f.isDirectory() || !p.endsWith(".txt")) {
-            server.send(404);
+    if (station) {
+        String ssid = settings.get("sta-ssid");
+        if (ssid.isEmpty()) {
+            status = "Настройте Wi-Fi";
             return;
         }
-        server.sendHeader("X-Content-Type-Options", "nosniff");
-        server.streamFile(f, "text/plain; charset=utf-8");
-    });
-    server.on("/mkdir", HTTP_POST, [this] {
-        if (!authorize())
-            return;
-        String p = path();
-        bool ok = storage.ready && p.length() && SD.mkdir(p);
-        server.send(ok ? 200 : 400, "text/plain", ok ? "OK" : "Cannot create");
-    });
-    server.on("/delete", HTTP_POST, [this] {
-        if (!authorize())
-            return;
-        String p = path();
-        bool ok =
-            server.arg("confirm") == "yes" && p.length() && p != "/TikoOS" && storage.remove(p);
-        server.send(ok ? 200 : 400, "text/plain", ok ? "OK" : "Cannot delete");
-    });
-    server.on(
-        "/upload", HTTP_POST,
-        [this] {
+        WiFi.mode(WIFI_STA);
+        WiFi.setAutoReconnect(true);
+        WiFi.begin(ssid.c_str(), settings.get("sta-pass").c_str());
+        active = true;
+        connectStarted = millis();
+        status = "Подключение: " + ssid;
+    } else {
+        WiFi.mode(WIFI_AP);
+        active = WiFi.softAP("TikoOS", password.c_str(), 1, 0, 1);
+        status = active ? "http://" + WiFi.softAPIP().toString() : "AP error";
+        if (active)
+            startServer();
+    }
+}
+void WiFiTransferApp::startServer() {
+    if (!configured) {
+        const char *headers[] = {"X-Tiko-CSRF"};
+        server.collectHeaders(headers, 1);
+        server.on("/", HTTP_GET, [this] {
+            if (auth())
+                page();
+        });
+        server.on("/view", HTTP_GET, [this] {
+            if (!auth())
+                return;
+            String p = path();
+            File f = storage.ready && p.length() ? SD.open(p) : File();
+            if (!f || f.isDirectory() || !p.endsWith(".txt")) {
+                server.send(404);
+                return;
+            }
+            server.sendHeader("X-Content-Type-Options", "nosniff");
+            server.streamFile(f, "text/plain; charset=utf-8");
+        });
+        server.on("/mkdir", HTTP_POST, [this] {
             if (!authorize())
                 return;
-            server.send(uploadOK ? 200 : 400, "text/plain",
-                        uploadOK ? "OK" : "Upload rejected (TXT, 2 MiB max, no overwrite)");
-        },
-        [this] { onUpload(); });
-    server.onNotFound([this] { server.send(404); });
+            String p = path();
+            bool ok = storage.ready && p.length() && SD.mkdir(p);
+            server.send(ok ? 200 : 400, "text/plain", ok ? "OK" : "Cannot create");
+        });
+        server.on("/delete", HTTP_POST, [this] {
+            if (!authorize())
+                return;
+            String p = path();
+            bool ok =
+                server.arg("confirm") == "yes" && p.length() && p != "/TikoOS" && storage.remove(p);
+            server.send(ok ? 200 : 400, "text/plain", ok ? "OK" : "Cannot delete");
+        });
+        server.on(
+            "/upload", HTTP_POST,
+            [this] {
+                if (!authorize())
+                    return;
+                server.send(uploadOK ? 200 : 400, "text/plain",
+                            uploadOK ? "OK" : "Upload rejected (TXT, 2 MiB max, no overwrite)");
+            },
+            [this] { onUpload(); });
+        server.onNotFound([this] { server.send(404); });
+        configured = true;
+    }
     server.begin();
-    status = "http://" + WiFi.softAPIP().toString();
+    serving = true;
 }
 void WiFiTransferApp::stop() {
     if (upload)
@@ -136,6 +159,8 @@ void WiFiTransferApp::stop() {
     WiFi.softAPdisconnect(true);
     WiFi.mode(WIFI_OFF);
     active = false;
+    serving = false;
+    WiFi.scanDelete();
 }
 void WiFiTransferApp::onUpload() {
     auto &u = server.upload();
@@ -180,7 +205,7 @@ void WiFiTransferApp::page() {
     }
     String s =
         R"HTML(<!doctype html><html lang="ru"><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>TikoOS</title><style>body{background:#10151d;color:white;font:16px system-ui;max-width:700px;margin:auto;padding:20px}a{color:#48dcff}article,button,input{background:#222c38;color:white;border:1px solid #415368;border-radius:10px;padding:12px;margin:5px}article{display:flex;align-items:center;justify-content:space-between}button{cursor:pointer}input{max-width:85%}</style><h1>TikoOS · Files</h1>)HTML";
-    s += "<p>" + html(storage.capacity()) + "</p><h3>" + html(p) +
+    s += "<p>" + html(storage.freeSpace()) + "</p><h3>" + html(p) +
          "</h3><a href='/?path=/TikoOS'>TikoOS</a>";
     if (p != "/TikoOS")
         s += " · <a href='/?path=" + url(p.substring(0, p.lastIndexOf('/'))) + "'>Назад</a>";
@@ -209,4 +234,32 @@ void WiFiTransferApp::page() {
     server.sendHeader("Cache-Control", "no-store");
     server.sendHeader("X-Frame-Options", "DENY");
     server.send(200, "text/html; charset=utf-8", s);
+}
+
+void WiFiTransferApp::loop() {
+    if (!active)
+        return;
+    if (station) {
+        if (WiFi.status() == WL_CONNECTED) {
+            status = "http://" + WiFi.localIP().toString();
+            if (!serving)
+                startServer();
+        } else {
+            if (serving) {
+                server.stop();
+                serving = false;
+                if (upload)
+                    upload.close();
+                if (temp.length())
+                    SD.remove(temp);
+                temp = "";
+                uploadOK = false;
+                connectStarted = millis();
+            }
+            if (millis() - connectStarted > 20000)
+                status = "Нет связи: Back / повтор";
+        }
+    }
+    if (serving)
+        server.handleClient();
 }

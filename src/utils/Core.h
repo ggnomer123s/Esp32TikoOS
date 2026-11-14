@@ -92,3 +92,52 @@ struct Quadrature {
     }
 };
 } // namespace tiko
+
+namespace tiko {
+// Independent of rendering: a short click is emitted once on release even when frames are slow.
+struct DebouncedButton {
+    bool raw = true, stable = true, held = false;
+    uint32_t changed = 0, down = 0;
+    int sample(bool high, uint32_t now) {
+        if (high != raw) {
+            raw = high;
+            changed = now;
+        }
+        if (now - changed >= 20 && stable != raw) {
+            stable = raw;
+            if (!stable) {
+                down = now;
+                held = false;
+            } else if (!held)
+                return 1;
+        }
+        if (!stable && !held && now - down >= 650) {
+            held = true;
+            return 2;
+        }
+        return 0;
+    }
+};
+inline void popUtf8(std::string &s) {
+    if (s.empty())
+        return;
+    size_t p = s.size() - 1;
+    while (p && (uint8_t(s[p]) & 0xc0) == 0x80)
+        --p;
+    s.resize(p);
+}
+inline bool sectorRange(uint32_t lba, uint32_t offset, uint32_t length, uint32_t count) {
+    return offset < 512 && uint64_t(lba) * 512 + offset + length <= uint64_t(count) * 512;
+}
+} // namespace tiko
+namespace tiko {
+inline bool safeLeaf(const std::string &s) {
+    if (s.empty() || s[0] == '.' || s.back() == '.' || s.back() == ' ')
+        return false;
+    for (char c : s)
+        if (c == '/' || c == '\\' || c == '<' || c == '>' || c == ':' || c == '"' || c == '|' ||
+            c == '*' || c == '?')
+            return false;
+    return safePath("/TikoOS/" + s);
+}
+} // namespace tiko
