@@ -5,6 +5,18 @@
 Прототип компилируется; физическая плата в этой сессии недоступна.
 **Поведение оборудования и установка через Launcher — Unverified.**
 
+## Скачать
+
+- **[Скачать прошивку firmware.bin](https://raw.githubusercontent.com/ggnomer123s/Esp32TikoOS/main/dist/firmware.bin)**
+- **[Скачать файлы microSD — microsd.zip](https://raw.githubusercontent.com/ggnomer123s/Esp32TikoOS/main/dist/microsd.zip)**
+
+Распакуйте `microsd.zip` в корень карты, сохраняя свои файлы. Архив содержит
+каталог `TikoOS/` с конспектами и формулами, а также `firmware.bin` для Launcher.
+Установка прошивки: `Launcher → SD → firmware.bin → Install` после сверки платы
+и разделов по инструкции ниже.
+
+История изменений: [aireadme.md](aireadme.md).
+
 ## Возможности
 
 - Графитовый интерфейс 320×170: карточки, cyan/blue/purple акцент, status bar,
@@ -85,7 +97,7 @@ TLS и контрольные суммы не отключаются. Обычн
 
 FAT32, MBR. Скопируйте каталог `sdcard/TikoOS` в корень microSD, сохранив чужие
 файлы и существующие пользовательские документы. Не форматируйте карту ради
-установки. В `dist/TikoOS-v0.1-sd.zip` также включён app `firmware.bin` для Launcher.
+установки. В `dist/microsd.zip` также включён app `firmware.bin` для Launcher.
 
 Пример пути: `/TikoOS/notes/Physics/Heat.txt`. Формулы — `/TikoOS/formulas/<предмет>/*.txt`.
 Каталоги `favorites`, `config`, `assets` зарезервированы; избранное/настройки
