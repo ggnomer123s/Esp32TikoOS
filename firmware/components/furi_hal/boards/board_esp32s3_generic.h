@@ -1,0 +1,23 @@
+/**
+ * @file board_esp32s3_generic.h
+ * Generic ESP32-S3 board definition.
+ *
+ * Hardware-identical to the LilyGo T-Embed CC1101 — the only ESP32-S3 board
+ * currently supported.  Used as the CI build target for generic S3 validation.
+ */
+
+#pragma once
+
+#include "board_lilygo_t_embed_cc1101.h"
+
+/* Override identity so logs and version strings show the generic name */
+#undef BOARD_NAME
+#define BOARD_NAME "ESP32-S3 Generic"
+/* Kurz-ID = Release-Ordner unter https://sor3nt.github.io/release/<BOARD_ID>/latest */
+#define BOARD_ID          "esp32s3_generic"
+
+/* T-Embed-only features stay off on the generic board: no external IR TX pin
+ * (GPIO43 lease), no forced-reboot combo (single-core build anyway). */
+#undef BOARD_PIN_IR_TX_EXT
+#undef BOARD_REBOOT_COMBO_PIN_A
+#undef BOARD_REBOOT_COMBO_PIN_B

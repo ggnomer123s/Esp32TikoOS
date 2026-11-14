@@ -1,0 +1,147 @@
+#include "storage.h"
+#include "storage_i.h"
+#include "storage_message.h"
+#include "storage_processing.h"
+#include "storage/storage_glue.h"
+#include "storages/storage_ext.h"
+#include <assets_icons.h>
+
+#define STORAGE_TICK 1000
+
+#define ICON_SD_MOUNTED &I_SDcardMounted_11x8
+#define ICON_SD_ERROR   &I_SDcardFail_11x8
+
+#define TAG "Storage"
+
+static void storage_app_sd_icon_draw_callback(Canvas* canvas, void* context) {
+    furi_assert(canvas);
+    furi_assert(context);
+    Storage* app = context;
+
+    // here we don't care about thread race when reading / writing status
+    switch(app->storage[ST_EXT].status) {
+    case StorageStatusNotReady:
+        break;
+    case StorageStatusOK:
+        canvas_draw_icon(canvas, 0, 0, ICON_SD_MOUNTED);
+        break;
+    default:
+        canvas_draw_icon(canvas, 0, 0, ICON_SD_ERROR);
+        break;
+    }
+}
+
+Storage* storage_app_alloc(void) {
+    Storage* app = malloc(sizeof(Storage));
+    app->message_queue = furi_message_queue_alloc(8, sizeof(StorageMessage));
+    app->pubsub = furi_pubsub_alloc();
+
+    for(uint8_t i = 0; i < STORAGE_COUNT; i++) {
+        storage_data_init(&app->storage[i]);
+        storage_data_timestamp(&app->storage[i]);
+    }
+
+    storage_ext_init(&app->storage[ST_EXT]);
+
+    // sd icon gui
+    app->sd_gui.enabled = (app->storage[ST_EXT].status != StorageStatusNotReady);
+    app->sd_gui.view_port = view_port_alloc();
+    view_port_set_width(app->sd_gui.view_port, icon_get_width(ICON_SD_MOUNTED));
+    view_port_draw_callback_set(app->sd_gui.view_port, storage_app_sd_icon_draw_callback, app);
+    view_port_set_statusbar_icon(app->sd_gui.view_port, ViewPortStatusBarIconSdCard);
+    view_port_enabled_set(app->sd_gui.view_port, app->sd_gui.enabled);
+
+    Gui* gui = furi_record_open(RECORD_GUI);
+    gui_add_view_port(gui, app->sd_gui.view_port, GuiLayerStatusBarLeft);
+    furi_record_close(RECORD_GUI);
+
+    return app;
+}
+
+void storage_tick(Storage* app) {
+#if CONFIG_T_EMBED_PLUS_SD_RECOVERY
+    const bool sd_was_ok = app->storage[ST_EXT].status == StorageStatusOK;
+    const bool sd_was_enabled = app->sd_gui.enabled;
+#endif
+    for(uint8_t i = 0; i < STORAGE_COUNT; i++) {
+        StorageApi api = app->storage[i].api;
+        if(api.tick != NULL) {
+            api.tick(&app->storage[i]);
+        }
+    }
+
+    // storage not enabled but was enabled (sd card unmount)
+    if(app->storage[ST_EXT].status == StorageStatusNotReady && app->sd_gui.enabled == true) {
+        app->sd_gui.enabled = false;
+        view_port_enabled_set(app->sd_gui.view_port, false);
+
+        FURI_LOG_I(TAG, "SD card unmount");
+        StorageEvent event = {.type = StorageEventTypeCardUnmount};
+        furi_pubsub_publish(app->pubsub, &event);
+    }
+
+    // storage enabled (or in error state) but was not enabled (sd card mount)
+    if((app->storage[ST_EXT].status == StorageStatusOK ||
+        app->storage[ST_EXT].status == StorageStatusNotMounted ||
+        app->storage[ST_EXT].status == StorageStatusNoFS ||
+        app->storage[ST_EXT].status == StorageStatusNotAccessible ||
+        app->storage[ST_EXT].status == StorageStatusErrorInternal) &&
+       app->sd_gui.enabled == false) {
+        app->sd_gui.enabled = true;
+        view_port_enabled_set(app->sd_gui.view_port, true);
+
+        if(app->storage[ST_EXT].status == StorageStatusOK) {
+            FURI_LOG_I(TAG, "SD card mount");
+            StorageEvent event = {.type = StorageEventTypeCardMount};
+            furi_pubsub_publish(app->pubsub, &event);
+        } else {
+            FURI_LOG_I(TAG, "SD card mount error");
+            StorageEvent event = {.type = StorageEventTypeCardMountError};
+            furi_pubsub_publish(app->pubsub, &event);
+        }
+    }
+#if CONFIG_T_EMBED_PLUS_SD_RECOVERY
+    // An error icon is already enabled, so a recovered card does not pass through
+    // the normal disabled-to-enabled mount notification above.
+    if(sd_was_enabled && !sd_was_ok && app->storage[ST_EXT].status == StorageStatusOK) {
+        view_port_update(app->sd_gui.view_port);
+        FURI_LOG_I(TAG, "SD card recovered");
+        StorageEvent event = {.type = StorageEventTypeCardMount};
+        furi_pubsub_publish(app->pubsub, &event);
+    }
+#endif
+}
+
+int32_t storage_srv(void* p) {
+    UNUSED(p);
+    Storage* app = storage_app_alloc();
+    furi_record_create(RECORD_STORAGE, app);
+
+    if(furi_hal_rtc_is_flag_set(FuriHalRtcFlagStorageFormatInternal)) {
+        FURI_LOG_W(TAG, "Format Internal not supported, clearing flag");
+        furi_hal_rtc_reset_flag(FuriHalRtcFlagStorageFormatInternal);
+    }
+
+    StorageMessage message;
+#if CONFIG_T_EMBED_PLUS_SD_RECOVERY
+    uint32_t last_tick = furi_get_tick();
+#endif
+    while(1) {
+        if(furi_message_queue_get(app->message_queue, &message, STORAGE_TICK) == FuriStatusOk) {
+            storage_process_message(app, &message);
+        }
+#if CONFIG_T_EMBED_PLUS_SD_RECOVERY
+        // Pending remounts must not starve while applications keep the queue busy.
+        if((uint32_t)(furi_get_tick() - last_tick) >= furi_ms_to_ticks(STORAGE_TICK)) {
+            storage_tick(app);
+            last_tick = furi_get_tick();
+        }
+#else
+        else {
+            storage_tick(app);
+        }
+#endif
+    }
+
+    return 0;
+}

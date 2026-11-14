@@ -1,0 +1,8 @@
+menu "TikoOS"
+    config TIKO_LAUNCHER_APP
+        bool "Build as an independent Launcher application"
+        default y
+        help
+            Ship an app image only. Disable in-app OTA writes to other app slots.
+            Bootloader and the actual partition table belong to the installed Launcher.
+endmenu

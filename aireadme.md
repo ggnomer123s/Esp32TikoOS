@@ -3,6 +3,48 @@
 Здесь фиксируются изменения проекта: что сделано, какие проверки выполнены
 и какие ограничения остались. Новые записи добавляются сверху, под этим описанием.
 
+## 2026-11-14 — v0.3: Furi/ESP-IDF и отдельный Launcher app
+
+- Зафиксирована основа Sor3nt/Flipper-Zero-ESP32-Port,
+  commit e6ec11972a8e025d7ab686a6ef3016cf52360834, в `firmware/`;
+  источники/версии SDK и компонентов записаны в third_party.lock.json.
+- GUI, Input, ViewDispatcher, Storage, Loader/Desktop, Wi-Fi и BT services
+  используются из базы. Profile FAM выбирает системные/учебные приложения.
+- Notes, Formulas, документы Favorites, Calculator/Monitor и EN/RU keyboard
+  перенесены на Furi. Кириллические/математические bitmap glyphs встроены в image.
+  Бounded reader 768 bytes, три шрифта, bookmark, новое TXT до 8192 bytes;
+  каталоги листаются по 64 записи, нет прежнего скрытого лимита 128.
+- Files/Archive, Bluetooth, USB-Storage и Clock/stopwatch повторно не реализованы:
+  используются штатные возможности базы. Clock переведён на монотонное elapsed
+  time, состояние секундомера сохраняется между открытиями до reboot.
+- Перенесены AP / My network через штатные Wi-Fi HAL/worker и глобальный reconnect.
+  Пароль AP/Web по умолчанию Tigran123456!, login tiko, пользовательский пароль
+  сохраняется. HTML встроен в flash и адаптирован из Web-Filesystem базы.
+- Сохранены auth/CSRF, sandbox /TikoOS, строгий decode URL, TXT/2 MiB uploads,
+  временная запись, запрет перезаписи и подтверждение удаления файлов. HTTP
+  обслуживает отдельная задача. Автоматический внешний SNTP отключён.
+- Ввод базы дополнен reverse/sensitivity и raw diagnostics. Убран 150 ms click
+  veto после вращения; кнопка читается перед quadrature, чтобы press-jostle не
+  менял выбор. Первое действие после сна выполняется, а не поглощается.
+- Исправлены LCD reset (-1 вместо GPIO40/I2S), sleep pin guards, shared-SPI recovery,
+  Locale include path для C++, явные зависимости LED/TinyUSB. SDK не патчится;
+  WIFITE adapter/exports не включены. NVS не стирается автоматически при init error.
+- Добавлен Launcher app-only профиль: target app, build-only size table 4 MiB,
+  in-app OTA/rollback и boot-U2F migration отключены. Образ не требует новой
+  таблицы dual-OTA, отдельного bootloader или второго app-слота. OTA-объект
+  проверен через nm: нет ссылок на API записи в app-слоты.
+- Пакет карты переименован в **TikoOS-microSD.zip**, содержит только app-image
+  и SD-данные, без bootloader/partition binaries. README содержит прямые ссылки.
+- Сохранены v0.2 app/SD package для отката и историческая инструкция. Корневой
+  platformio.ini помечен legacy; активная сборка выполняется build_native.py.
+- Добавлены installer/build/package scripts, pinned Python requirements,
+  native policy/input tests и новый аппаратный чек-лист.
+- Проверки: ESP32-S3 app build SUCCESS, **888 host assertions + 7 input-сценариев**,
+  ASan/UBSan, JS syntax, ESP checksum/hash и целостность ZIP. Размер/хеш — BUILD.md.
+- На физической плате запуск, реальная отзывчивость, радио, SD/USB и конкретный
+  Launcher не проверены. Для нового app нужен слот около 2.7 MB, 1.5 MB мало.
+  Смена базы не является доказательством устранения всех ошибок на устройстве.
+
 ## 2026-11-14 — v0.2: ввод, USB, Wi-Fi и создание заметок
 
 - Удалён PWM fade при открытии экранов, вызывавший видимое мерцание.

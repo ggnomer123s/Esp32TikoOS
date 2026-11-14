@@ -1,0 +1,1130 @@
+/**
+ * @file furi_hal_sd.c
+ * SD Card HAL for ESP32-C6 (Waveshare ESP32-C6-LCD-1.9)
+ *
+ * Uses ESP-IDF SDSPI driver + raw FatFs diskio registration.
+ * Shares SPI2_HOST with the display (CS-based device selection).
+ */
+
+#include "furi_hal_sd.h"
+#include "../fatfs.h"
+#include "furi_hal_resources.h"
+#include "furi_hal_spi.h"
+#include "furi_hal_spi_bus.h"
+#include <sdkconfig.h>
+#include <driver/gpio.h>
+
+/* The "Plus" recovery path (lock the shared bus around SD init, bounded retry
+ * at falling clock rates, reject false tiny-card identities) is useful for any
+ * board that shares SPI2 between the card, the LCD and the radios. Boards opt in
+ * with BOARD_SD_RECOVERY without depending on the T-Embed Plus Kconfig symbol. */
+#if CONFIG_T_EMBED_PLUS_SD_RECOVERY || defined(BOARD_SD_RECOVERY)
+#define FURI_HAL_SD_RECOVERY 1
+#else
+#define FURI_HAL_SD_RECOVERY 0
+#endif
+
+#if FURI_HAL_SD_RECOVERY
+#include "furi_hal_gpio.h"
+#endif
+
+#include <inttypes.h>
+#include <string.h>
+#include <ff.h>
+#include <diskio_impl.h>
+#include <esp_log.h>
+#include <esp_timer.h>
+#include <esp_heap_caps.h>
+#include <freertos/FreeRTOS.h>
+#include <freertos/task.h>
+#include <esp_memory_utils.h>
+#include <sdmmc_cmd.h>
+#include <driver/sdspi_host.h>
+
+#ifdef BOARD_SD_BUS_NOT_SHARED
+#include <driver/spi_master.h>
+#endif
+
+static const char* TAG = "FuriHalSd";
+
+#define SD_FATFS_DRIVE "0:"
+#ifdef BOARD_SD_BUS_NOT_SHARED
+#define SD_SPI_HOST    BOARD_SD_SPI_HOST /* dedicated SD SPI host (e.g. SPI3_HOST) */
+#else
+#define SD_SPI_HOST    SPI2_HOST
+#endif
+#ifdef BOARD_SD_SPI_FREQ_KHZ
+#define SD_MAX_FREQ    BOARD_SD_SPI_FREQ_KHZ /* board override (shared-bus boards) */
+#else
+#define SD_MAX_FREQ    (20 * 1000) /* 20 MHz — conservative for shared bus */
+#endif
+#define SD_BOUNCE_SECTORS 8 /* 4 KiB persistent DMA bounce buffer */
+
+/* Log any single FatFs block request that keeps the SD bus busy longer than
+ * this. Normal desktop loads are a few milliseconds; multi-second entries mean
+ * the card is retrying or the shared bus is starved, which is what made the UI
+ * feel frozen. */
+#define SD_SLOW_OP_US 30000
+
+static sdmmc_card_t* sd_card = NULL;
+static sdspi_dev_handle_t sd_handle = 0;
+static bool sd_initialized = false;
+static bool sd_diskio_registered = false;
+static bool sd_disk_status_check = false;
+static bool sd_mounted = false;
+static const BYTE sd_pdrv = 0;
+static uint8_t* sd_bounce_buf = NULL;
+#ifdef BOARD_SD_BUS_NOT_SHARED
+/* True only if *this* module called spi_bus_initialize() successfully; only
+ * then may sd_release_host() free the bus. If it was already up it isn't ours. */
+static bool sd_bus_initialized_here = false;
+#endif
+#if FURI_HAL_SD_RECOVERY
+/* A successful lower-speed session stays at that speed. A full unmount starts
+ * the next session at the normal rate; retries cannot slow below 4 MHz. */
+static uint8_t sd_retry_frequency_step;
+static const int sd_retry_frequency_khz[] = {SD_MAX_FREQ, 10000, 4000};
+/* Some SanDisk cards temporarily enumerate as SD032 / OEM SD / 62688
+ * sectors. Do not expose this false identity to FatFs or raw USB access.
+ * A fresh driver/card initialization must run through the existing bounded
+ * recovery path. This is not a capacity override or a physical power cycle.
+ * Reference: jupiter-hw-support commit 7d58dcf5cea3d7fc82546639902d6a6150ade7f0.
+ */
+static bool sd_has_sandisk_fallback_identity(const sdmmc_card_t* card) {
+    return strncmp(card->cid.name, "SD032", 6) == 0 && card->cid.oem_id == 0x5344 &&
+           card->csd.sector_size == 512 && card->csd.capacity == 62688;
+}
+
+static void sd_lower_retry_frequency(void) {
+    if((size_t)sd_retry_frequency_step + 1 < sizeof(sd_retry_frequency_khz) / sizeof(sd_retry_frequency_khz[0]))
+        ++sd_retry_frequency_step;
+}
+#endif
+
+static bool sd_ensure_bounce_buf(void) {
+    if(sd_bounce_buf) return true;
+    /* Allocate once in internal DMA-capable RAM, 64-byte aligned to satisfy
+     * any cache/DMA alignment requirement. Reused for every non-DMA transfer
+     * so we don't fragment the DMA heap with per-call temporaries. */
+    sd_bounce_buf = heap_caps_aligned_alloc(
+        64, 512 * SD_BOUNCE_SECTORS, MALLOC_CAP_DMA | MALLOC_CAP_INTERNAL);
+    if(!sd_bounce_buf) {
+        ESP_LOGE(TAG, "Failed to allocate %d-byte SD bounce buffer", 512 * SD_BOUNCE_SECTORS);
+        return false;
+    }
+    return true;
+}
+
+static bool sd_buf_is_dma_capable(const void* buf) {
+    /* SDSPI works with internal RAM buffers. PSRAM-resident buffers force
+     * the ESP-IDF SDMMC layer into a per-call temp allocation path that
+     * can fail when the DMA heap is fragmented. */
+    return !esp_ptr_external_ram(buf);
+}
+
+static bool sd_host_conflicts_with(const FuriHalSpiBus* bus) {
+    if(!bus || !bus->initialized) return false;
+
+    /* No conflict if bus shares the same SPI host (CS-based multiplexing) */
+    if(bus->host_id == SD_SPI_HOST) return false;
+
+#ifdef BOARD_SD_BUS_NOT_SHARED
+    /* Dedicated SD bus: a conflict is any overlap with one of its own pins. */
+    return bus->mosi_pin == gpio_sdcard_miso2.pin || bus->miso_pin == gpio_sdcard_miso2.pin ||
+           bus->sck_pin == gpio_sdcard_miso2.pin ||
+           bus->mosi_pin == gpio_sdcard_cs.pin || bus->miso_pin == gpio_sdcard_cs.pin ||
+           bus->sck_pin == gpio_sdcard_cs.pin ||
+           bus->mosi_pin == gpio_sdcard_mosi.pin || bus->miso_pin == gpio_sdcard_mosi.pin ||
+           bus->sck_pin == gpio_sdcard_mosi.pin ||
+           bus->mosi_pin == gpio_sdcard_clk.pin || bus->miso_pin == gpio_sdcard_clk.pin ||
+           bus->sck_pin == gpio_sdcard_clk.pin;
+#else
+    return bus->mosi_pin == gpio_sdcard_miso.pin || bus->miso_pin == gpio_sdcard_miso.pin ||
+           bus->mosi_pin == gpio_sdcard_cs.pin || bus->miso_pin == gpio_sdcard_cs.pin ||
+           bus->sck_pin == gpio_sdcard_cs.pin;
+#endif
+}
+
+#ifdef BOARD_SD_BUS_NOT_SHARED
+/* Initialize the dedicated SD SPI bus. Idempotent: if the bus is already up
+ * (by us or anyone else) returns true without touching it; only a bus we
+ * brought up ourselves is later freed in sd_release_host(). */
+static bool sd_ensure_spi_bus(void) {
+    spi_bus_config_t bus_cfg = {
+        .mosi_io_num = gpio_sdcard_mosi.pin,
+        .miso_io_num = gpio_sdcard_miso2.pin,
+        .sclk_io_num = gpio_sdcard_clk.pin,
+        .quadwp_io_num = -1,
+        .quadhd_io_num = -1,
+        .max_transfer_sz = 512 * SD_BOUNCE_SECTORS,
+    };
+    esp_err_t err = spi_bus_initialize(SD_SPI_HOST, &bus_cfg, SPI_DMA_CH_AUTO);
+    if(err == ESP_OK) {
+        sd_bus_initialized_here = true;
+        return true;
+    }
+    if(err == ESP_ERR_INVALID_STATE) return true; /* already up; not ours to free */
+    ESP_LOGE(TAG, "spi_bus_initialize(SD_SPI_HOST=%d) failed: %s", (int)SD_SPI_HOST,
+             esp_err_to_name(err));
+    return false;
+}
+#endif
+
+#if !FURI_HAL_SD_RECOVERY
+static uint16_t sd_read_le16(const uint8_t* data) {
+    return (uint16_t)data[0] | ((uint16_t)data[1] << 8);
+}
+
+static uint32_t sd_read_le32(const uint8_t* data) {
+    return (uint32_t)data[0] | ((uint32_t)data[1] << 8) | ((uint32_t)data[2] << 16) |
+           ((uint32_t)data[3] << 24);
+}
+
+static bool sd_has_boot_signature(const uint8_t* sector) {
+    return sector[510] == 0x55 && sector[511] == 0xAA;
+}
+
+static bool sd_sector_looks_like_mbr(const uint8_t* sector) {
+    if(!sd_has_boot_signature(sector)) return false;
+
+    for(size_t i = 0; i < 4; i++) {
+        const uint8_t* entry = &sector[446 + i * 16];
+        if(entry[4] != 0 || sd_read_le32(&entry[8]) != 0 || sd_read_le32(&entry[12]) != 0) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+static const char* sd_partition_type_name(uint8_t type) {
+    switch(type) {
+    case 0x00:
+        return "empty";
+    case 0x01:
+        return "FAT12";
+    case 0x04:
+    case 0x06:
+    case 0x0E:
+        return "FAT16";
+    case 0x0B:
+    case 0x0C:
+        return "FAT32";
+    case 0x07:
+        return "exFAT/NTFS";
+    case 0x83:
+        return "Linux";
+    case 0xEE:
+        return "GPT-protective";
+    default:
+        return "unknown";
+    }
+}
+
+static const char* sd_detect_sector_format(const uint8_t* sector) {
+    if(!sd_has_boot_signature(sector)) return "missing-boot-signature";
+    if(memcmp(&sector[3], "EXFAT   ", 8) == 0) return "exFAT";
+    if(memcmp(&sector[54], "FAT12   ", 8) == 0) return "FAT12";
+    if(memcmp(&sector[54], "FAT16   ", 8) == 0) return "FAT16";
+    if(memcmp(&sector[82], "FAT32   ", 8) == 0) return "FAT32";
+    if(sd_sector_looks_like_mbr(sector)) return "MBR";
+    return "unknown";
+}
+
+static void sd_make_hex_preview(const uint8_t* data, size_t len, char* out, size_t out_size) {
+    if(out_size == 0) return;
+    out[0] = '\0';
+
+    size_t pos = 0;
+    for(size_t i = 0; i < len && pos + 4 < out_size; i++) {
+        int written = snprintf(&out[pos], out_size - pos, "%02X%s", data[i], (i + 1 < len) ? " " : "");
+        if(written < 0) break;
+        pos += (size_t)written;
+    }
+}
+
+static void sd_log_boot_sector_details(const char* label, const uint8_t* sector) {
+    const char* format = sd_detect_sector_format(sector);
+    char preview[16 * 3] = {0};
+    sd_make_hex_preview(sector, 16, preview, sizeof(preview));
+
+    ESP_LOGI(
+        TAG,
+        "%s: detected=%s sig=%02X%02X first16=[%s]",
+        label,
+        format,
+        sector[510],
+        sector[511],
+        preview);
+
+    if(strcmp(format, "FAT12") == 0 || strcmp(format, "FAT16") == 0) {
+        uint16_t bytes_per_sector = sd_read_le16(&sector[11]);
+        uint8_t sectors_per_cluster = sector[13];
+        uint16_t reserved = sd_read_le16(&sector[14]);
+        uint8_t fats = sector[16];
+        uint32_t total_sectors = sd_read_le16(&sector[19]);
+        if(total_sectors == 0) total_sectors = sd_read_le32(&sector[32]);
+        ESP_LOGI(
+            TAG,
+            "%s: FAT bytes_per_sector=%u sectors_per_cluster=%u reserved=%u fats=%u total_sectors=%" PRIu32,
+            label,
+            bytes_per_sector,
+            sectors_per_cluster,
+            reserved,
+            fats,
+            total_sectors);
+    } else if(strcmp(format, "FAT32") == 0) {
+        uint16_t bytes_per_sector = sd_read_le16(&sector[11]);
+        uint8_t sectors_per_cluster = sector[13];
+        uint16_t reserved = sd_read_le16(&sector[14]);
+        uint8_t fats = sector[16];
+        uint32_t fat_size = sd_read_le32(&sector[36]);
+        uint32_t root_cluster = sd_read_le32(&sector[44]);
+        uint32_t total_sectors = sd_read_le32(&sector[32]);
+        ESP_LOGI(
+            TAG,
+            "%s: FAT32 bytes_per_sector=%u sectors_per_cluster=%u reserved=%u fats=%u fat_size=%" PRIu32 " root_cluster=%" PRIu32 " total_sectors=%" PRIu32,
+            label,
+            bytes_per_sector,
+            sectors_per_cluster,
+            reserved,
+            fats,
+            fat_size,
+            root_cluster,
+            total_sectors);
+    } else if(strcmp(format, "exFAT") == 0) {
+        uint32_t fat_offset = sd_read_le32(&sector[80]);
+        uint32_t fat_length = sd_read_le32(&sector[84]);
+        uint32_t cluster_heap_offset = sd_read_le32(&sector[88]);
+        uint32_t cluster_count = sd_read_le32(&sector[92]);
+        uint32_t root_dir_cluster = sd_read_le32(&sector[96]);
+        uint32_t bytes_per_sector = 1u << sector[108];
+        uint32_t sectors_per_cluster = 1u << sector[109];
+        ESP_LOGW(
+            TAG,
+            "%s: exFAT detected bytes_per_sector=%" PRIu32 " sectors_per_cluster=%" PRIu32 " fat_offset=%" PRIu32 " fat_length=%" PRIu32 " cluster_heap=%" PRIu32 " cluster_count=%" PRIu32 " root_dir_cluster=%" PRIu32,
+            label,
+            bytes_per_sector,
+            sectors_per_cluster,
+            fat_offset,
+            fat_length,
+            cluster_heap_offset,
+            cluster_count,
+            root_dir_cluster);
+    }
+}
+
+static void sd_log_mount_hint(const char* label, const uint8_t* sector) {
+    const char* format = sd_detect_sector_format(sector);
+
+    if(strcmp(format, "exFAT") == 0) {
+        ESP_LOGW(
+            TAG,
+            "%s: unsupported filesystem exFAT. This firmware currently supports FAT12/16/32 only. Reformat the card or first partition as FAT32 (MBR).",
+            label);
+    } else if(strcmp(format, "missing-boot-signature") == 0) {
+        ESP_LOGW(TAG, "%s: sector has no valid boot signature; no mountable FAT volume found", label);
+    } else if(strcmp(format, "unknown") == 0) {
+        ESP_LOGW(TAG, "%s: unknown boot sector layout; expected FAT12/16/32", label);
+    }
+}
+
+static uint32_t sd_log_mbr_partitions(const uint8_t* sector) {
+    uint32_t first_partition_lba = 0;
+
+    for(size_t i = 0; i < 4; i++) {
+        const uint8_t* entry = &sector[446 + i * 16];
+        uint8_t type = entry[4];
+        uint32_t start_lba = sd_read_le32(&entry[8]);
+        uint32_t sector_count = sd_read_le32(&entry[12]);
+
+        if(type == 0 && start_lba == 0 && sector_count == 0) continue;
+
+        ESP_LOGI(
+            TAG,
+            "MBR partition %u: status=0x%02X type=0x%02X (%s) start_lba=%" PRIu32 " sectors=%" PRIu32,
+            (unsigned)i,
+            entry[0],
+            type,
+            sd_partition_type_name(type),
+            start_lba,
+            sector_count);
+
+        if(first_partition_lba == 0 && start_lba != 0) {
+            first_partition_lba = start_lba;
+        }
+    }
+
+    return first_partition_lba;
+}
+
+static void sd_log_card_diagnostics(const sdmmc_card_t* card) {
+    ESP_LOGI(
+        TAG,
+        "Diagnostic probe: mem=%" PRIu32 " sdio=%" PRIu32 " mmc=%" PRIu32 " ocr=0x%08" PRIX32 " sector_size=%d capacity_sectors=%d max_freq=%" PRIu32 " real_freq=%d",
+        (uint32_t)card->is_mem,
+        (uint32_t)card->is_sdio,
+        (uint32_t)card->is_mmc,
+        (uint32_t)card->ocr,
+        card->csd.sector_size,
+        card->csd.capacity,
+        (uint32_t)card->max_freq_khz,
+        card->real_freq_khz);
+    sdmmc_card_print_info(stdout, card);
+}
+
+
+
+
+
+static void sd_probe_filesystem(const sdmmc_card_t* card) {
+    uint8_t* sector = heap_caps_calloc(1, 512, MALLOC_CAP_DMA);
+    if(!sector) {
+        ESP_LOGW(TAG, "Diagnostic probe: failed to allocate sector buffer");
+        return;
+    }
+
+    esp_err_t ret = sdmmc_read_sectors((sdmmc_card_t*)card, sector, 0, 1);
+    if(ret != ESP_OK) {
+        ESP_LOGW(TAG, "Diagnostic probe: reading LBA0 failed: %s", esp_err_to_name(ret));
+        free(sector);
+        return;
+    }
+
+    sd_log_boot_sector_details("LBA0", sector);
+    sd_log_mount_hint("LBA0", sector);
+
+    if(sd_sector_looks_like_mbr(sector)) {
+        uint32_t first_partition_lba = sd_log_mbr_partitions(sector);
+        if(first_partition_lba != 0) {
+            ret = sdmmc_read_sectors((sdmmc_card_t*)card, sector, first_partition_lba, 1);
+            if(ret == ESP_OK) {
+                sd_log_boot_sector_details("Partition0", sector);
+                sd_log_mount_hint("Partition0", sector);
+            } else {
+                ESP_LOGW(
+                    TAG,
+                    "Diagnostic probe: reading partition boot sector at LBA %" PRIu32 " failed: %s",
+                    first_partition_lba,
+                    esp_err_to_name(ret));
+            }
+        }
+    }
+
+    free(sector);
+}
+
+static void sd_run_mount_diagnostics(const sdspi_device_config_t* dev_cfg, const sdmmc_host_t* host) {
+    ESP_LOGW(TAG, "Running SD diagnostics after mount failure");
+
+    esp_err_t ret = host->init ? host->init() : ESP_OK;
+    if(ret != ESP_OK) {
+        ESP_LOGW(TAG, "Diagnostic probe: host init failed: %s", esp_err_to_name(ret));
+        return;
+    }
+
+    sdspi_dev_handle_t handle = 0;
+    ret = sdspi_host_init_device(dev_cfg, &handle);
+    if(ret != ESP_OK) {
+        ESP_LOGW(TAG, "Diagnostic probe: init device failed: %s", esp_err_to_name(ret));
+        sdspi_host_deinit();
+        return;
+    }
+
+    sdmmc_host_t probe_host = *host;
+    probe_host.slot = handle;
+
+    sdmmc_card_t card;
+    memset(&card, 0, sizeof(card));
+
+    ret = sdmmc_card_init(&probe_host, &card);
+    if(ret != ESP_OK) {
+        ESP_LOGW(TAG, "Diagnostic probe: card_init failed: %s", esp_err_to_name(ret));
+        sdspi_host_remove_device(handle);
+        sdspi_host_deinit();
+        return;
+    }
+
+    sd_log_card_diagnostics(&card);
+    sd_probe_filesystem(&card);
+
+    sdspi_host_remove_device(handle);
+    sdspi_host_deinit();
+}
+
+#endif /* legacy diagnostic probe */
+
+#ifdef BOARD_SD_WRITE_SELFTEST
+/* TEMPORARY: prove the write path still works now that the SDSPI pre-command
+ * ready poll is skipped. Reads a sector and writes the very same bytes back,
+ * so the contents cannot change even if the write misbehaves. */
+static void sd_write_selftest(void) {
+    uint8_t* buf = heap_caps_malloc(512, MALLOC_CAP_DMA);
+    if(!buf) {
+        ESP_LOGW(TAG, "write selftest: no DMA buffer");
+        return;
+    }
+    const int64_t t0 = esp_timer_get_time();
+    esp_err_t r = sdmmc_read_sectors(sd_card, buf, 0, 1);
+    const int64_t t1 = esp_timer_get_time();
+    esp_err_t w = ESP_ERR_INVALID_STATE;
+    if(r == ESP_OK) {
+        w = sdmmc_write_sectors(sd_card, buf, 0, 1);
+    }
+    const int64_t t2 = esp_timer_get_time();
+    ESP_LOGW(
+        TAG,
+        "write selftest: read=%s %lld ms, same-sector rewrite=%s %lld ms",
+        esp_err_to_name(r),
+        (long long)((t1 - t0) / 1000),
+        esp_err_to_name(w),
+        (long long)((t2 - t1) / 1000));
+    heap_caps_free(buf);
+}
+#endif
+
+static DSTATUS sd_fatfs_card_available(BYTE pdrv) {
+    if((pdrv != sd_pdrv) || (sd_card == NULL)) {
+        return STA_NOINIT;
+    }
+
+    furi_hal_spi_bus_lock();
+    const esp_err_t err = sdmmc_get_status(sd_card);
+    furi_hal_spi_bus_unlock();
+
+    if(err != ESP_OK) {
+        ESP_LOGE(TAG, "SD status check failed: %s", esp_err_to_name(err));
+        return STA_NOINIT;
+    }
+
+    return 0;
+}
+
+static DSTATUS sd_fatfs_initialize(BYTE pdrv) {
+    return sd_fatfs_card_available(pdrv);
+}
+
+static DSTATUS sd_fatfs_status(BYTE pdrv) {
+    if(sd_disk_status_check) {
+        return sd_fatfs_card_available(pdrv);
+    }
+
+    return ((pdrv == sd_pdrv) && (sd_card != NULL)) ? 0 : STA_NOINIT;
+}
+
+static DRESULT sd_fatfs_read(BYTE pdrv, BYTE* buff, DWORD sector, UINT count) {
+    if((pdrv != sd_pdrv) || (sd_card == NULL)) {
+        return RES_PARERR;
+    }
+
+    const int64_t op_start_us = esp_timer_get_time();
+    int64_t lock_wait_us = 0;
+    int64_t xfer_us = 0;
+    esp_err_t err = ESP_OK;
+    /* Do NOT hold furi_hal_spi_bus_lock() across the whole transfer. SD reads
+     * can take hundreds of milliseconds and the display commit path also needs
+     * this lock for its SPI transactions; holding it here made the UI
+     * (animations, button handling) completely unresponsive while the desktop
+     * loaded settings/animations from the card. ESP-IDF's SPI master already
+     * serialises individual transactions, so we lock per chunk instead. */
+    if(sd_buf_is_dma_capable(buff)) {
+        const size_t block_size = sd_card->csd.sector_size;
+        UINT remaining = count;
+        DWORD cur_sector = sector;
+        BYTE* cur_dst = buff;
+        while(remaining > 0) {
+            UINT chunk = remaining > SD_BOUNCE_SECTORS ? SD_BOUNCE_SECTORS : remaining;
+            const int64_t lock_start_us = esp_timer_get_time();
+            furi_hal_spi_bus_lock();
+            const int64_t xfer_start_us = esp_timer_get_time();
+            err = sdmmc_read_sectors(sd_card, cur_dst, cur_sector, chunk);
+            xfer_us += esp_timer_get_time() - xfer_start_us;
+            lock_wait_us += xfer_start_us - lock_start_us;
+            furi_hal_spi_bus_unlock();
+            if(err != ESP_OK) break;
+            cur_dst += block_size * chunk;
+            cur_sector += chunk;
+            remaining -= chunk;
+        }
+    } else if(sd_ensure_bounce_buf()) {
+        /* PSRAM destination: stage through persistent DMA-capable buffer. */
+        const size_t block_size = sd_card->csd.sector_size;
+        UINT remaining = count;
+        DWORD cur_sector = sector;
+        BYTE* cur_dst = buff;
+        while(remaining > 0) {
+            UINT chunk = remaining > SD_BOUNCE_SECTORS ? SD_BOUNCE_SECTORS : remaining;
+            furi_hal_spi_bus_lock();
+            err = sdmmc_read_sectors(sd_card, sd_bounce_buf, cur_sector, chunk);
+            furi_hal_spi_bus_unlock();
+            if(err != ESP_OK) break;
+            memcpy(cur_dst, sd_bounce_buf, block_size * chunk);
+            cur_dst += block_size * chunk;
+            cur_sector += chunk;
+            remaining -= chunk;
+        }
+    } else {
+        err = ESP_ERR_NO_MEM;
+    }
+
+    if(err != ESP_OK) {
+        ESP_LOGE(TAG, "SD read failed: %s", esp_err_to_name(err));
+        return RES_ERROR;
+    }
+
+    const int64_t op_us = esp_timer_get_time() - op_start_us;
+    if(op_us > SD_SLOW_OP_US) {
+        ESP_LOGW(
+            TAG,
+            "slow read: %u sect @%lu took %lld ms (lock=%lld xfer=%lld)",
+            (unsigned)count,
+            (unsigned long)sector,
+            (long long)(op_us / 1000),
+            (long long)(lock_wait_us / 1000),
+            (long long)(xfer_us / 1000));
+    }
+
+    return RES_OK;
+}
+
+static DRESULT sd_fatfs_write(BYTE pdrv, const BYTE* buff, DWORD sector, UINT count) {
+    if((pdrv != sd_pdrv) || (sd_card == NULL)) {
+        return RES_PARERR;
+    }
+
+    const int64_t op_start_us = esp_timer_get_time();
+    esp_err_t err = ESP_OK;
+    if(sd_buf_is_dma_capable(buff)) {
+        const size_t block_size = sd_card->csd.sector_size;
+        UINT remaining = count;
+        DWORD cur_sector = sector;
+        const BYTE* cur_src = buff;
+        while(remaining > 0) {
+            UINT chunk = remaining > SD_BOUNCE_SECTORS ? SD_BOUNCE_SECTORS : remaining;
+            furi_hal_spi_bus_lock();
+            err = sdmmc_write_sectors(sd_card, cur_src, cur_sector, chunk);
+            furi_hal_spi_bus_unlock();
+            if(err != ESP_OK) break;
+            cur_src += block_size * chunk;
+            cur_sector += chunk;
+            remaining -= chunk;
+        }
+    } else if(sd_ensure_bounce_buf()) {
+        const size_t block_size = sd_card->csd.sector_size;
+        UINT remaining = count;
+        DWORD cur_sector = sector;
+        const BYTE* cur_src = buff;
+        while(remaining > 0) {
+            UINT chunk = remaining > SD_BOUNCE_SECTORS ? SD_BOUNCE_SECTORS : remaining;
+            memcpy(sd_bounce_buf, cur_src, block_size * chunk);
+            furi_hal_spi_bus_lock();
+            err = sdmmc_write_sectors(sd_card, sd_bounce_buf, cur_sector, chunk);
+            furi_hal_spi_bus_unlock();
+            if(err != ESP_OK) break;
+            cur_src += block_size * chunk;
+            cur_sector += chunk;
+            remaining -= chunk;
+        }
+    } else {
+        err = ESP_ERR_NO_MEM;
+    }
+
+    if(err != ESP_OK) {
+        ESP_LOGE(TAG, "SD write failed: %s", esp_err_to_name(err));
+        return RES_ERROR;
+    }
+
+    const int64_t op_us = esp_timer_get_time() - op_start_us;
+    if(op_us > SD_SLOW_OP_US) {
+        ESP_LOGW(
+            TAG,
+            "slow write: %u sect @%lu took %lld ms",
+            (unsigned)count,
+            (unsigned long)sector,
+            (long long)(op_us / 1000));
+    }
+
+    return RES_OK;
+}
+
+static DRESULT sd_fatfs_ioctl(BYTE pdrv, BYTE cmd, void* buff) {
+    if((pdrv != sd_pdrv) || (sd_card == NULL)) {
+        return RES_PARERR;
+    }
+
+    switch(cmd) {
+    case CTRL_SYNC:
+        return RES_OK;
+    case GET_SECTOR_COUNT:
+        *((DWORD*)buff) = sd_card->csd.capacity;
+        return RES_OK;
+    case GET_SECTOR_SIZE:
+        *((WORD*)buff) = sd_card->csd.sector_size;
+        return RES_OK;
+    case GET_BLOCK_SIZE:
+        return RES_ERROR;
+#if FF_USE_TRIM
+    case CTRL_TRIM: {
+        if(sdmmc_can_trim(sd_card) != ESP_OK) {
+            return RES_PARERR;
+        }
+
+        const DWORD start_sector = ((DWORD*)buff)[0];
+        const DWORD end_sector = ((DWORD*)buff)[1];
+
+        furi_hal_spi_bus_lock();
+        const esp_err_t err = sdmmc_erase_sectors(
+            sd_card,
+            start_sector,
+            end_sector - start_sector + 1,
+            sdmmc_can_discard(sd_card) == ESP_OK ? SDMMC_DISCARD_ARG : SDMMC_ERASE_ARG);
+        furi_hal_spi_bus_unlock();
+
+        return (err == ESP_OK) ? RES_OK : RES_ERROR;
+    }
+#endif
+    default:
+        return RES_ERROR;
+    }
+}
+
+static void sd_register_fatfs_diskio(void) {
+    static const ff_diskio_impl_t sd_fatfs_impl = {
+        .init = &sd_fatfs_initialize,
+        .status = &sd_fatfs_status,
+        .read = &sd_fatfs_read,
+        .write = &sd_fatfs_write,
+        .ioctl = &sd_fatfs_ioctl,
+    };
+
+    ff_diskio_register(sd_pdrv, &sd_fatfs_impl);
+    sd_disk_status_check = false;
+    sd_diskio_registered = true;
+}
+
+static void sd_release_host(void) {
+#if FURI_HAL_SD_RECOVERY
+    furi_hal_spi_bus_lock();
+#endif
+    if(sd_diskio_registered) {
+        ff_diskio_unregister(sd_pdrv);
+        sd_diskio_registered = false;
+    }
+
+    if(sd_handle) {
+        sdspi_host_remove_device(sd_handle);
+        sd_handle = 0;
+    }
+
+#if FURI_HAL_SD_RECOVERY
+    /* Remove only our device. SDSPI deinit can remove other registered cards.
+     * IDF removal leaves CS as an input; drive it idle before other SPI users
+     * run. Set the output latch first to avoid a low pulse on enabling output. */
+    furi_hal_gpio_write(&gpio_sdcard_cs, true);
+    furi_hal_gpio_init_simple(&gpio_sdcard_cs, GpioModeOutputPushPull);
+#else
+    sdspi_host_deinit();
+#endif
+
+#ifdef BOARD_SD_BUS_NOT_SHARED
+    /* Only free the SPI bus if we brought it up ourselves. */
+    if(sd_bus_initialized_here) {
+        spi_bus_free(SD_SPI_HOST);
+        sd_bus_initialized_here = false;
+    }
+#endif
+
+    free(sd_card);
+    sd_card = NULL;
+    sd_initialized = false;
+    sd_mounted = false;
+    fatfs_init();
+#if FURI_HAL_SD_RECOVERY
+    furi_hal_spi_bus_unlock();
+#endif
+}
+
+static bool sd_prepare_card(void) {
+#if FURI_HAL_SD_RECOVERY
+    furi_hal_spi_bus_lock();
+#endif
+    if(sd_initialized && sd_card != NULL) {
+#if FURI_HAL_SD_RECOVERY
+        furi_hal_spi_bus_unlock();
+#endif
+        return true;
+    }
+
+    if(sd_host_conflicts_with(&furi_hal_spi_bus_external) ||
+       sd_host_conflicts_with(&furi_hal_spi_bus_subghz)) {
+        ESP_LOGW(
+            TAG,
+            "Skipping SD init because SPI2_HOST is reserved for the external CC1101 pin set");
+#if FURI_HAL_SD_RECOVERY
+        furi_hal_spi_bus_unlock();
+#endif
+        return false;
+    }
+
+    sd_release_host();
+
+#ifdef BOARD_SD_BUS_NOT_SHARED
+    if(!sd_ensure_spi_bus()) {
+#if FURI_HAL_SD_RECOVERY
+        furi_hal_spi_bus_unlock();
+#endif
+        return false;
+    }
+    ESP_LOGI(
+        TAG,
+        "Initializing SD card on SPI%d_HOST, CS=%d MISO=%d MOSI=%d CLK=%d",
+        (int)SD_SPI_HOST,
+        gpio_sdcard_cs.pin,
+        gpio_sdcard_miso2.pin,
+        gpio_sdcard_mosi.pin,
+        gpio_sdcard_clk.pin);
+#else
+    ESP_LOGI(TAG, "Initializing SD card on SPI2_HOST, CS=GPIO%d", gpio_sdcard_cs.pin);
+#endif
+
+    sdspi_device_config_t dev_cfg = SDSPI_DEVICE_CONFIG_DEFAULT();
+    dev_cfg.host_id = SD_SPI_HOST;
+    dev_cfg.gpio_cs = gpio_sdcard_cs.pin;
+    dev_cfg.gpio_cd = SDSPI_SLOT_NO_CD;
+    dev_cfg.gpio_wp = SDSPI_SLOT_NO_WP;
+    dev_cfg.gpio_int = SDSPI_SLOT_NO_INT;
+
+    sdmmc_host_t host = SDSPI_HOST_DEFAULT();
+#if FURI_HAL_SD_RECOVERY
+    host.max_freq_khz = sd_retry_frequency_khz[sd_retry_frequency_step];
+#else
+    host.max_freq_khz = SD_MAX_FREQ;
+#endif
+
+    ESP_LOGI(
+        TAG,
+        "SDSPI config: host=%d cs=%d cd=%d wp=%d int=%d target_freq_khz=%d",
+        dev_cfg.host_id,
+        dev_cfg.gpio_cs,
+        dev_cfg.gpio_cd,
+        dev_cfg.gpio_wp,
+        dev_cfg.gpio_int,
+        host.max_freq_khz);
+
+    esp_err_t ret = ESP_OK;
+    furi_hal_spi_bus_lock();
+    do {
+        ret = sdspi_host_init();
+        if(ret != ESP_OK) break;
+
+        ret = sdspi_host_init_device(&dev_cfg, &sd_handle);
+        if(ret != ESP_OK) break;
+
+        sd_card = calloc(1, sizeof(sdmmc_card_t));
+        if(sd_card == NULL) {
+            ret = ESP_ERR_NO_MEM;
+            break;
+        }
+
+        host.slot = sd_handle;
+        ret = sdmmc_card_init(&host, sd_card);
+        if(ret == ESP_OK) {
+            int real_freq_khz = 0;
+            esp_err_t freq_err = sdspi_host_get_real_freq(sd_handle, &real_freq_khz);
+            ESP_LOGI(
+                TAG,
+                "SD clock: requested=%d kHz actual=%d kHz (card max=%lu kHz) err=%s",
+                host.max_freq_khz,
+                real_freq_khz,
+                (unsigned long)sd_card->max_freq_khz,
+                esp_err_to_name(freq_err));
+            /* Bring-up diagnostic: is an idle MISO (all CS high) actually
+             * pulled up, or is some chip holding it low? An idle-low MISO
+             * makes the SDSPI ready-poll burn its full 40 ms timeout on every
+             * command. Kept behind a switch: it toggles the pull resistors on
+             * the shared MISO line and briefly drives it, neither of which
+             * belongs in a normal boot. */
+#ifdef BOARD_SD_MISO_PROBE
+            const gpio_num_t miso = (gpio_num_t)gpio_sdcard_miso.pin;
+            gpio_set_pull_mode(miso, GPIO_PULLUP_ONLY);
+            const int miso_pullup = gpio_get_level(miso);
+            vTaskDelay(pdMS_TO_TICKS(2));
+            const int miso_pullup_settled = gpio_get_level(miso);
+            gpio_set_pull_mode(miso, GPIO_PULLDOWN_ONLY);
+            vTaskDelay(pdMS_TO_TICKS(2));
+            const int miso_pulldown = gpio_get_level(miso);
+            gpio_set_pull_mode(miso, GPIO_PULLUP_ONLY);
+            /* Distinguish a resistive pull-down from an active driver/short:
+             * briefly drive the line high (all chips are deselected here). */
+            gpio_set_direction(miso, GPIO_MODE_INPUT_OUTPUT);
+            gpio_set_level(miso, 1);
+            vTaskDelay(pdMS_TO_TICKS(2));
+            const int miso_driven_high = gpio_get_level(miso);
+            gpio_set_direction(miso, GPIO_MODE_INPUT);
+            gpio_set_pull_mode(miso, GPIO_PULLUP_ONLY);
+            ESP_LOGI(
+                TAG,
+                "MISO idle: pullup=%d/%d pulldown=%d driven_high=%d (1/1 = floating, 0/0 = driven low)",
+                miso_pullup,
+                miso_pullup_settled,
+                miso_pulldown,
+                miso_driven_high);
+#endif
+#ifdef BOARD_SD_WRITE_SELFTEST
+            sd_write_selftest();
+#endif
+        }
+#if FURI_HAL_SD_RECOVERY
+        if(ret == ESP_OK) {
+            ESP_LOGI(
+                TAG,
+                "SD identity: name=%.5s OEM=0x%04X sectors=%d sector_size=%d",
+                sd_card->cid.name,
+                (unsigned)sd_card->cid.oem_id,
+                sd_card->csd.capacity,
+                sd_card->csd.sector_size);
+            if(sd_has_sandisk_fallback_identity(sd_card)) {
+                ESP_LOGW(TAG, "SanDisk SD032 fallback identity; rejecting false 30 MB card and scheduling fresh initialization");
+                ret = ESP_ERR_INVALID_RESPONSE;
+            }
+        }
+#endif
+    } while(false);
+    furi_hal_spi_bus_unlock();
+
+    if(ret != ESP_OK) {
+        ESP_LOGE(TAG, "SD init failed: %s", esp_err_to_name(ret));
+#if FURI_HAL_SD_RECOVERY
+        /* One failed attempt owns one device. Never attach a second probe on
+         * the same CS, and do not issue an unrequested retry here. */
+        sd_lower_retry_frequency();
+#else
+        /* SPI2 is shared with the LCD/CC1101: tear down the failed device first
+         * (no duplicate CS device) and keep the bus locked for the whole probe,
+         * otherwise a concurrent display transfer trips spi_hal_setup_trans. */
+        furi_hal_spi_bus_lock();
+        sd_release_host();
+        sd_run_mount_diagnostics(&dev_cfg, &host);
+#endif
+        sd_release_host();
+        furi_hal_spi_bus_unlock();
+        return false;
+    }
+
+    fatfs_init();
+    sd_register_fatfs_diskio();
+    sd_initialized = true;
+
+    sdmmc_card_print_info(stdout, sd_card);
+#if FURI_HAL_SD_RECOVERY
+    furi_hal_spi_bus_unlock();
+#endif
+    return true;
+}
+
+void furi_hal_sd_presence_init(void) {
+    /* No hardware detect pin on this board */
+    fatfs_init();
+}
+
+bool furi_hal_sd_is_present(void) {
+    if(sd_host_conflicts_with(&furi_hal_spi_bus_external) ||
+       sd_host_conflicts_with(&furi_hal_spi_bus_subghz)) {
+        return false;
+    }
+
+    /* Without a detect pin, try init on demand and let the mount logic decide. */
+    return true;
+}
+
+FuriStatus furi_hal_sd_init(bool power_reset) {
+#if FURI_HAL_SD_RECOVERY
+    if(power_reset) {
+        /* Keep the existing cross-host pin ownership check ahead of cleanup. */
+        if(!furi_hal_sd_is_present()) return FuriStatusError;
+        /* The board has no dedicated SD power switch. This is a requested
+         * driver/card reset after a failed mount, not a shared-rail toggle.
+         * The storage owner must exclude open files and active USB MSC. */
+        furi_hal_spi_bus_lock();
+        FRESULT result = f_mount(NULL, SD_FATFS_DRIVE, 0);
+        if(result != FR_OK) {
+            ESP_LOGE(TAG, "SD retry detach failed: %d", result);
+            furi_hal_spi_bus_unlock();
+            return FuriStatusError;
+        }
+        /* A failed card init already advanced the rate. An initialized card
+         * being reset here failed later at the filesystem stage. */
+        if(sd_initialized) sd_lower_retry_frequency();
+        sd_release_host();
+        bool ready = sd_prepare_card();
+        furi_hal_spi_bus_unlock();
+        return ready ? FuriStatusOk : FuriStatusError;
+    }
+#else
+    (void)power_reset;
+#endif
+    return sd_prepare_card() ? FuriStatusOk : FuriStatusError;
+}
+
+FuriStatus furi_hal_sd_get_card_state(void) {
+    return (sd_initialized && sd_card != NULL) ? FuriStatusOk : FuriStatusError;
+}
+
+FuriStatus furi_hal_sd_info(FuriHalSdInfo* info) {
+    if(!info) return FuriStatusError;
+    if(!sd_initialized || !sd_card) return FuriStatusError;
+
+    memset(info, 0, sizeof(FuriHalSdInfo));
+
+    info->manufacturer_id = (uint8_t)sd_card->cid.mfg_id;
+
+    /* oem_id is an int in ESP-IDF; extract as 2 ASCII chars */
+    info->oem_id[0] = (char)((sd_card->cid.oem_id >> 8) & 0xFF);
+    info->oem_id[1] = (char)(sd_card->cid.oem_id & 0xFF);
+    info->oem_id[2] = '\0';
+
+    strncpy(info->product_name, sd_card->cid.name, sizeof(info->product_name) - 1);
+    info->product_name[sizeof(info->product_name) - 1] = '\0';
+
+    info->product_revision_major = (sd_card->cid.revision >> 4) & 0x0F;
+    info->product_revision_minor = sd_card->cid.revision & 0x0F;
+    info->product_serial_number = sd_card->cid.serial;
+    info->manufacturing_month = sd_card->cid.date % 100;
+    info->manufacturing_year = 2000 + sd_card->cid.date / 100;
+
+    /* Capacity in bytes = sector count * sector size */
+    info->sector_size = sd_card->csd.sector_size;
+    info->capacity = (uint64_t)sd_card->csd.capacity * sd_card->csd.sector_size;
+
+    return FuriStatusOk;
+}
+
+uint8_t furi_hal_sd_max_mount_retry_count(void) {
+    return 3;
+}
+
+bool furi_hal_sd_mount(void) {
+    if(sd_mounted) return true;
+    if(!sd_prepare_card()) return false;
+
+    const FRESULT result = f_mount(&fatfs_object, SD_FATFS_DRIVE, 1);
+    if(result != FR_OK && result != FR_NO_FILESYSTEM) {
+        ESP_LOGE(TAG, "FatFs mount failed: %d", result);
+        return false;
+    }
+
+    sd_mounted = true;
+    ESP_LOGI(TAG, "SD card mounted at " SD_FATFS_DRIVE);
+    return true;
+}
+
+bool furi_hal_sd_unmount(void) {
+#if FURI_HAL_SD_RECOVERY
+    if(!sd_initialized) {
+        sd_retry_frequency_step = 0;
+        return true;
+    }
+#else
+    if(!sd_initialized) return true;
+#endif
+
+    const FRESULT result = f_mount(NULL, SD_FATFS_DRIVE, 0);
+    if(result != FR_OK) {
+        ESP_LOGE(TAG, "FatFs unmount failed: %d", result);
+        return false;
+    }
+
+    ESP_LOGI(TAG, "SD card unmounted");
+    sd_release_host();
+#if FURI_HAL_SD_RECOVERY
+    sd_retry_frequency_step = 0;
+#endif
+    return true;
+}
+
+bool furi_hal_sd_is_mounted(void) {
+    return sd_mounted;
+}
+
+bool furi_hal_sd_release_fatfs(void) {
+    if(!sd_mounted) return true;
+
+    const FRESULT result = f_mount(NULL, SD_FATFS_DRIVE, 0);
+    if(result != FR_OK) {
+        ESP_LOGE(TAG, "FatFs soft-unmount failed: %d", result);
+        return false;
+    }
+    sd_mounted = false;
+    ESP_LOGI(TAG, "SD FATFS released (card stays initialized for raw access)");
+    return true;
+}
+
+bool furi_hal_sd_read_sectors_raw(uint32_t sector, void* buf, uint32_t count) {
+    if(!sd_initialized || sd_card == NULL || buf == NULL) return false;
+
+    esp_err_t err = ESP_OK;
+    furi_hal_spi_bus_lock();
+
+    if(sd_buf_is_dma_capable(buf)) {
+        err = sdmmc_read_sectors(sd_card, buf, sector, count);
+    } else if(sd_ensure_bounce_buf()) {
+        const size_t block_size = sd_card->csd.sector_size;
+        uint32_t remaining = count;
+        uint32_t cur_sector = sector;
+        uint8_t* cur_dst = buf;
+        while(remaining > 0) {
+            uint32_t chunk = remaining > SD_BOUNCE_SECTORS ? SD_BOUNCE_SECTORS : remaining;
+            err = sdmmc_read_sectors(sd_card, sd_bounce_buf, cur_sector, chunk);
+            if(err != ESP_OK) break;
+            memcpy(cur_dst, sd_bounce_buf, block_size * chunk);
+            cur_dst += block_size * chunk;
+            cur_sector += chunk;
+            remaining -= chunk;
+        }
+    } else {
+        err = ESP_ERR_NO_MEM;
+    }
+
+    furi_hal_spi_bus_unlock();
+    return err == ESP_OK;
+}
+
+bool furi_hal_sd_write_sectors_raw(uint32_t sector, const void* buf, uint32_t count) {
+    if(!sd_initialized || sd_card == NULL || buf == NULL) return false;
+
+    esp_err_t err = ESP_OK;
+    furi_hal_spi_bus_lock();
+
+    if(sd_buf_is_dma_capable(buf)) {
+        err = sdmmc_write_sectors(sd_card, buf, sector, count);
+    } else if(sd_ensure_bounce_buf()) {
+        const size_t block_size = sd_card->csd.sector_size;
+        uint32_t remaining = count;
+        uint32_t cur_sector = sector;
+        const uint8_t* cur_src = buf;
+        while(remaining > 0) {
+            uint32_t chunk = remaining > SD_BOUNCE_SECTORS ? SD_BOUNCE_SECTORS : remaining;
+            memcpy(sd_bounce_buf, cur_src, block_size * chunk);
+            err = sdmmc_write_sectors(sd_card, sd_bounce_buf, cur_sector, chunk);
+            if(err != ESP_OK) break;
+            cur_src += block_size * chunk;
+            cur_sector += chunk;
+            remaining -= chunk;
+        }
+    } else {
+        err = ESP_ERR_NO_MEM;
+    }
+
+    furi_hal_spi_bus_unlock();
+    return err == ESP_OK;
+}
+
+uint32_t furi_hal_sd_sector_count(void) {
+    if(!sd_initialized || sd_card == NULL) return 0;
+    return (uint32_t)sd_card->csd.capacity;
+}
+
+uint16_t furi_hal_sd_sector_size(void) {
+    if(!sd_initialized || sd_card == NULL) return 0;
+    return (uint16_t)sd_card->csd.sector_size;
+}

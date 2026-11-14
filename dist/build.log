@@ -1,62 +1,113 @@
-Processing tiko (platform: file:///workspace/platform-espressif32; board: tiko-cc1101; framework: arduino)
---------------------------------------------------------------------------------
-Verbose mode can be enabled via `-v, --verbose` option
-CONFIGURATION: https://docs.platformio.org/page/boards/espressif32/tiko-cc1101.html
-PLATFORM: Espressif 32 (6.13.0) > LilyGo T-Embed-PN532 (16M Flash 8M QSPI PSRAM)
-HARDWARE: ESP32S3 240MHz, 320KB RAM, 16MB Flash
-DEBUG: Current (cmsis-dap) External (cmsis-dap, esp-bridge, esp-builtin, esp-prog, iot-bus-jtag, jlink, minimodule, olimex-arm-usb-ocd, olimex-arm-usb-ocd-h, olimex-arm-usb-tiny-h, olimex-jtag-tiny, tumpa)
-PACKAGES: 
- - framework-arduinoespressif32 @ 3.20017.0 (2.0.17) 
- - tool-esptoolpy @ 2.41100.0 (4.11.0) 
- - tool-scons @ 4.40801.0 (4.8.1) 
- - toolchain-riscv32-esp @ 8.4.0+2021r2-patch5 
- - toolchain-xtensa-esp32s3 @ 8.4.0+2021r2-patch5
-LDF: Library Dependency Finder -> https://bit.ly/configure-pio-ldf
-LDF Modes: Finder ~ chain, Compatibility ~ soft
-Found 34 compatible libraries
-Scanning dependencies...
-Dependency Graph
-|-- TFT_eSPI @ 2.5.33
-|-- WebServer @ 2.0.0
-|-- WiFi @ 2.0.0
-|-- SPI @ 2.0.0
-|-- Wire @ 2.0.0
-|-- SD @ 2.0.0
-|-- Preferences @ 2.0.0
-Building in release mode
-Compiling .pio/build/tiko/src/input/InputManager.cpp.o
-Compiling .pio/build/tiko/src/main.cpp.o
-Compiling .pio/build/tiko/src/network/USBTransferApp.cpp.o
-Compiling .pio/build/tiko/src/ui/ScreenManager.cpp.o
-In file included from src/network/../storage/StorageManager.h:5,
-                 from src/network/USBTransferApp.h:2,
-                 from src/network/USBTransferApp.cpp:1:
-.pio/libdeps/tiko/TFT_eSPI/TFT_eSPI.h:973:8: warning: #warning >>>>------>> TOUCH_CS pin not defined, TFT_eSPI touch functions will not be available! [-Wcpp]
-       #warning >>>>------>> TOUCH_CS pin not defined, TFT_eSPI touch functions will not be available!
-        ^~~~~~~
-In file included from src/ui/../apps/../display/DisplayManager.h:3,
-                 from src/ui/../apps/Reader.h:2,
-                 from src/ui/ScreenManager.h:2,
-                 from src/ui/ScreenManager.cpp:1:
-.pio/libdeps/tiko/TFT_eSPI/TFT_eSPI.h:973:8: warning: #warning >>>>------>> TOUCH_CS pin not defined, TFT_eSPI touch functions will not be available! [-Wcpp]
-       #warning >>>>------>> TOUCH_CS pin not defined, TFT_eSPI touch functions will not be available!
-        ^~~~~~~
-In file included from src/ui/../apps/../display/DisplayManager.h:3,
-                 from src/ui/../apps/Reader.h:2,
-                 from src/ui/ScreenManager.h:2,
-                 from src/main.cpp:1:
-.pio/libdeps/tiko/TFT_eSPI/TFT_eSPI.h:973:8: warning: #warning >>>>------>> TOUCH_CS pin not defined, TFT_eSPI touch functions will not be available! [-Wcpp]
-       #warning >>>>------>> TOUCH_CS pin not defined, TFT_eSPI touch functions will not be available!
-        ^~~~~~~
-Linking .pio/build/tiko/firmware.elf
-Retrieving maximum program size .pio/build/tiko/firmware.elf
-Checking size .pio/build/tiko/firmware.elf
-Advanced Memory Usage is available via "PlatformIO Home > Project Inspect"
-RAM:   [==        ]  18.4% (used 60348 bytes from 327680 bytes)
-Flash: [==        ]  23.1% (used 968793 bytes from 4194304 bytes)
-Building .pio/build/tiko/firmware.bin
-esptool.py v4.11.0
-Creating esp32s3 image...
-Merged 2 ELF sections
-Successfully created esp32s3 image.
-========================= [SUCCESS] Took 10.76 seconds =========================
+/workspace/esp-idf-5.4.1/tools/idf.py:368: DeprecationWarning: 'MultiCommand' is deprecated and will be removed in Click 9.0. Use 'Group' instead.
+  class CLI(click.MultiCommand):
+Executing action: reconfigure
+Running cmake in directory /workspace/Esp32TikoOS/firmware/build-tiko
+Executing "cmake -G Ninja -DPYTHON_DEPS_CHECKED=1 -DPYTHON=/workspace/idf-tools/python_env/idf5.4_py3.12_env/bin/python -DESP_PLATFORM=1 -DFLIPPER_BOARD=lilygo_t_embed_cc1101 -DIDF_TARGET=esp32s3 -DSDKCONFIG_DEFAULTS=sdkconfig.defaults;sdkconfig.tiko.defaults -DCCACHE_ENABLE=0 /workspace/Esp32TikoOS/firmware"...
+-- Firmware version (PROJECT_VER): 0.3.0
+-- Component directory /workspace/Esp32TikoOS/firmware/components/bt does not contain a CMakeLists.txt file. No component will be added
+-- Component directory /workspace/Esp32TikoOS/firmware/components/cli does not contain a CMakeLists.txt file. No component will be added
+-- Component directory /workspace/Esp32TikoOS/firmware/components/compat does not contain a CMakeLists.txt file. No component will be added
+-- Component directory /workspace/Esp32TikoOS/firmware/components/dolphin does not contain a CMakeLists.txt file. No component will be added
+-- Component directory /workspace/Esp32TikoOS/firmware/components/namechanger does not contain a CMakeLists.txt file. No component will be added
+-- Component directory /workspace/Esp32TikoOS/firmware/components/power does not contain a CMakeLists.txt file. No component will be added
+-- Component directory /workspace/Esp32TikoOS/firmware/components/update_util does not contain a CMakeLists.txt file. No component will be added
+-- Component directory /workspace/Esp32TikoOS/firmware/components/bt does not contain a CMakeLists.txt file. No component will be added
+-- Component directory /workspace/Esp32TikoOS/firmware/components/cli does not contain a CMakeLists.txt file. No component will be added
+-- Component directory /workspace/Esp32TikoOS/firmware/components/compat does not contain a CMakeLists.txt file. No component will be added
+-- Component directory /workspace/Esp32TikoOS/firmware/components/dolphin does not contain a CMakeLists.txt file. No component will be added
+-- Component directory /workspace/Esp32TikoOS/firmware/components/namechanger does not contain a CMakeLists.txt file. No component will be added
+-- Component directory /workspace/Esp32TikoOS/firmware/components/power does not contain a CMakeLists.txt file. No component will be added
+-- Component directory /workspace/Esp32TikoOS/firmware/components/update_util does not contain a CMakeLists.txt file. No component will be added
+-- Building ESP-IDF components for target esp32s3
+"idf_component.yml" file was found for components:
+	/workspace/Esp32TikoOS/firmware/components/espressif__esp_tinyusb
+	/workspace/Esp32TikoOS/firmware/components/espressif__led_strip
+	/workspace/Esp32TikoOS/firmware/components/espressif__mdns
+	/workspace/Esp32TikoOS/firmware/components/espressif__tinyusb
+	/workspace/Esp32TikoOS/firmware/components/furi_hal
+However, the component manager is not enabled.
+-- Found Python3: /usr/bin/python3.13 (found version "3.13.5") found components: Interpreter
+-- Flipper board: waveshare_c6_1.9
+-- Project sdkconfig file /workspace/Esp32TikoOS/firmware/build-tiko/sdkconfig.lilygo_t_embed_cc1101
+NOTE: /workspace/esp-idf-5.4.1/components/bt/host/nimble/Kconfig.in:103: BT_NIMBLE_L2CAP_ENHANCED_COC: 'default 0' is not a valid bool value (only 'y' and 'n' are allowed). Value is treated as 'n'.
+NOTE: /workspace/esp-idf-5.4.1/components/bt/host/nimble/Kconfig.in:515: BT_NIMBLE_MESH_PROVISIONER: 'default 0' is not a valid bool value (only 'y' and 'n' are allowed). Value is treated as 'n'.
+NOTE: /workspace/esp-idf-5.4.1/components/fatfs/Kconfig:230: FATFS_PRINT_LLI: 'default 0' is not a valid bool value (only 'y' and 'n' are allowed). Value is treated as 'n'.
+NOTE: /workspace/esp-idf-5.4.1/components/fatfs/Kconfig:235: FATFS_PRINT_FLOAT: 'default 0' is not a valid bool value (only 'y' and 'n' are allowed). Value is treated as 'n'.
+NOTE: /workspace/esp-idf-5.4.1/components/bootloader/Kconfig.projbuild:441: Deprecation notice: hex literal '0' without '0x' prefix detected. In the next major version, hex literals will be required to have a '0x' prefix.
+NOTE: /workspace/esp-idf-5.4.1/components/bootloader/Kconfig.projbuild:481: Deprecation notice: hex literal '0' without '0x' prefix detected. In the next major version, hex literals will be required to have a '0x' prefix.
+NOTE: /workspace/esp-idf-5.4.1/components/bt/host/nimble/Kconfig.in:277: Deprecation notice: hex literal '0' without '0x' prefix detected. In the next major version, hex literals will be required to have a '0x' prefix.
+NOTE: /workspace/esp-idf-5.4.1/components/esp_mm/Kconfig:20: Deprecation notice: hex literal '0' without '0x' prefix detected. In the next major version, hex literals will be required to have a '0x' prefix.
+NOTE: /workspace/esp-idf-5.4.1/components/esp_system/./port/soc/esp32s3/Kconfig.memory:21: Deprecation notice: hex literal '0' without '0x' prefix detected. In the next major version, hex literals will be required to have a '0x' prefix.
+NOTE: /workspace/esp-idf-5.4.1/components/openthread/Kconfig:69: Deprecation notice: hex literal '0' without '0x' prefix detected. In the next major version, hex literals will be required to have a '0x' prefix.
+NOTE: /workspace/esp-idf-5.4.1/components/bt/sdkconfig.rename.esp32s3:4: duplicate rename mapping for CONFIG_BT_NIMBLE_COEX_PHY_CODED_TX_RX_TLIM_EN: previous target CONFIG_BT_LE_COEX_PHY_CODED_TX_RX_TLIM_EN, new target CONFIG_BT_CTRL_COEX_PHY_CODED_TX_RX_TLIM_EN - last mapping is used
+NOTE: /workspace/esp-idf-5.4.1/components/bt/sdkconfig.rename.esp32s3:5: duplicate rename mapping for CONFIG_BT_NIMBLE_COEX_PHY_CODED_TX_RX_TLIM_DIS: previous target CONFIG_BT_LE_COEX_PHY_CODED_TX_RX_TLIM_DIS, new target CONFIG_BT_CTRL_COEX_PHY_CODED_TX_RX_TLIM_DIS - last mapping is used
+Loading defaults file /workspace/Esp32TikoOS/firmware/sdkconfig.defaults...
+Loading defaults file /workspace/Esp32TikoOS/firmware/sdkconfig.defaults.esp32s3...
+NOTE: /tmp/kconfgen_tmpn8gm4oo0:60: CONFIG_SPIRAM_ALLOW_STACK_EXTERNAL_MEMORY was replaced with CONFIG_FREERTOS_TASK_CREATE_ALLOW_EXT_MEM
+NOTE: unknown kconfig symbol 'TINYUSB_HID_BUFSIZE' assigned to '16' in /workspace/Esp32TikoOS/firmware/sdkconfig.defaults.esp32s3
+NOTE: unknown kconfig symbol 'TINYUSB_MIDI_ENABLED' assigned to 'n' in /workspace/Esp32TikoOS/firmware/sdkconfig.defaults.esp32s3
+NOTE: unknown kconfig symbol 'TINYUSB_NCM_ENABLED' assigned to 'n' in /workspace/Esp32TikoOS/firmware/sdkconfig.defaults.esp32s3
+Loading defaults file /workspace/Esp32TikoOS/firmware/sdkconfig.tiko.defaults...
+NOTE: /tmp/kconfgen_tmp_y2odeo3:60: CONFIG_SPIRAM_ALLOW_STACK_EXTERNAL_MEMORY was replaced with CONFIG_FREERTOS_TASK_CREATE_ALLOW_EXT_MEM
+NOTE: unknown kconfig symbol 'TINYUSB_HID_BUFSIZE' assigned to '16' in /workspace/Esp32TikoOS/firmware/sdkconfig.tiko.defaults
+NOTE: unknown kconfig symbol 'TINYUSB_MIDI_ENABLED' assigned to 'n' in /workspace/Esp32TikoOS/firmware/sdkconfig.tiko.defaults
+NOTE: unknown kconfig symbol 'TINYUSB_NCM_ENABLED' assigned to 'n' in /workspace/Esp32TikoOS/firmware/sdkconfig.tiko.defaults
+NOTE: unknown kconfig symbol 'TINYUSB_HID_BUFSIZE' assigned to '16' in /workspace/Esp32TikoOS/firmware/sdkconfig.tiko.defaults
+NOTE: unknown kconfig symbol 'TINYUSB_MIDI_ENABLED' assigned to 'n' in /workspace/Esp32TikoOS/firmware/sdkconfig.tiko.defaults
+NOTE: unknown kconfig symbol 'TINYUSB_NCM_ENABLED' assigned to 'n' in /workspace/Esp32TikoOS/firmware/sdkconfig.tiko.defaults
+Loading defaults file /workspace/Esp32TikoOS/firmware/sdkconfig.defaults.lilygo_t_embed_cc1101...
+NOTE: unknown kconfig symbol 'TINYUSB_HID_BUFSIZE' assigned to '16' in /workspace/Esp32TikoOS/firmware/sdkconfig.defaults.lilygo_t_embed_cc1101
+NOTE: unknown kconfig symbol 'TINYUSB_MIDI_ENABLED' assigned to 'n' in /workspace/Esp32TikoOS/firmware/sdkconfig.defaults.lilygo_t_embed_cc1101
+NOTE: unknown kconfig symbol 'TINYUSB_NCM_ENABLED' assigned to 'n' in /workspace/Esp32TikoOS/firmware/sdkconfig.defaults.lilygo_t_embed_cc1101
+NOTE: unknown kconfig symbol 'TINYUSB_HID_BUFSIZE' assigned to '16' in /workspace/Esp32TikoOS/firmware/sdkconfig.defaults.lilygo_t_embed_cc1101
+NOTE: unknown kconfig symbol 'TINYUSB_MIDI_ENABLED' assigned to 'n' in /workspace/Esp32TikoOS/firmware/sdkconfig.defaults.lilygo_t_embed_cc1101
+NOTE: unknown kconfig symbol 'TINYUSB_NCM_ENABLED' assigned to 'n' in /workspace/Esp32TikoOS/firmware/sdkconfig.defaults.lilygo_t_embed_cc1101
+NOTE: Kconfig parser version: 1
+NOTE: Kconfig defaults policy: use sdkconfig
+NOTE: Status: Finished with notifications
+NOTE: /workspace/Esp32TikoOS/firmware/components/furi_hal/Kconfig.projbuild:27: T_EMBED_PLUS_SD_RECOVERY has user-set value y from /tmp/kconfgen_tmp_y2odeo3 but is not visible (disabled dependency)
+NOTE: /workspace/esp-idf-5.4.1/components/esp-tls/Kconfig:90: ESP_TLS_SKIP_SERVER_CERT_VERIFY has user-set value n from /tmp/kconfgen_tmp_y2odeo3 but is not visible (disabled dependency)
+-- Compiler supported targets: xtensa-esp-elf
+-- App "TikoOS" version: 0.3.0
+-- Adding linker script /workspace/Esp32TikoOS/firmware/build-tiko/esp-idf/esp_system/ld/memory.ld
+-- Adding linker script /workspace/Esp32TikoOS/firmware/build-tiko/esp-idf/esp_system/ld/sections.ld.in
+-- Adding linker script /workspace/esp-idf-5.4.1/components/esp_rom/esp32s3/ld/esp32s3.rom.ld
+-- Adding linker script /workspace/esp-idf-5.4.1/components/esp_rom/esp32s3/ld/esp32s3.rom.api.ld
+-- Adding linker script /workspace/esp-idf-5.4.1/components/esp_rom/esp32s3/ld/esp32s3.rom.bt_funcs.ld
+-- Adding linker script /workspace/esp-idf-5.4.1/components/esp_rom/esp32s3/ld/esp32s3.rom.libgcc.ld
+-- Adding linker script /workspace/esp-idf-5.4.1/components/esp_rom/esp32s3/ld/esp32s3.rom.wdt.ld
+-- Adding linker script /workspace/esp-idf-5.4.1/components/esp_rom/esp32s3/ld/esp32s3.rom.version.ld
+-- Adding linker script /workspace/esp-idf-5.4.1/components/esp_rom/esp32s3/ld/esp32s3.rom.newlib.ld
+-- Adding linker script /workspace/esp-idf-5.4.1/components/soc/esp32s3/ld/esp32s3.peripherals.ld
+-- Flipper board: lilygo_t_embed_cc1101
+-- Components: app_trace app_update archive assets bit_lib ble_hid ble_profile ble_serial bootloader bootloader_support bt btshim cmock console cxx datetime desktop desktop_settings dialogs driver efuse esp-tls esp_adc esp_app_format esp_bootloader_format esp_coex esp_common esp_driver_ana_cmpr esp_driver_cam esp_driver_dac esp_driver_gpio esp_driver_gptimer esp_driver_i2c esp_driver_i2s esp_driver_isp esp_driver_jpeg esp_driver_ledc esp_driver_mcpwm esp_driver_parlio esp_driver_pcnt esp_driver_ppa esp_driver_rmt esp_driver_sdio esp_driver_sdm esp_driver_sdmmc esp_driver_sdspi esp_driver_spi esp_driver_touch_sens esp_driver_tsens esp_driver_uart esp_driver_usb_serial_jtag esp_eth esp_event esp_gdbstub esp_hid esp_http_client esp_http_server esp_https_ota esp_https_server esp_hw_support esp_lcd esp_local_ctrl esp_mm esp_netif esp_netif_stack esp_partition esp_phy esp_pm esp_psram esp_ringbuf esp_rom esp_security esp_system esp_timer esp_vfs_console esp_wifi espcoredump espressif__esp_tinyusb espressif__led_strip espressif__mdns espressif__tinyusb esptool_py fatfs flipper_application flipper_format flipper_protobuf freertos furi furi_ble furi_hal fw_ota gui hal heap heatshrink http_parser idf_test ieee802154 infrared input json lfrfid libsmb2 loader locale log lwip main mbedtls mjs mlib mqtt music_worker nanopb newlib nfc notification nvs_flash nvs_sec_provider openthread partition_table perfmon protobuf-c protocomm pthread rpc rt sdmmc soc spi_flash spiffs storage subghz tcp_transport tiko toolbox touch_element u8g2 ulp unity usb vfs wear_levelling wifi wifi_provisioning wpa_supplicant xtensa
+-- Component paths: /workspace/esp-idf-5.4.1/components/app_trace /workspace/esp-idf-5.4.1/components/app_update /workspace/Esp32TikoOS/firmware/components/archive /workspace/Esp32TikoOS/firmware/components/assets /workspace/Esp32TikoOS/firmware/components/bit_lib /workspace/Esp32TikoOS/firmware/components/ble_hid /workspace/Esp32TikoOS/firmware/components/ble_profile /workspace/Esp32TikoOS/firmware/components/ble_serial /workspace/esp-idf-5.4.1/components/bootloader /workspace/esp-idf-5.4.1/components/bootloader_support /workspace/esp-idf-5.4.1/components/bt /workspace/Esp32TikoOS/firmware/components/btshim /workspace/esp-idf-5.4.1/components/cmock /workspace/esp-idf-5.4.1/components/console /workspace/esp-idf-5.4.1/components/cxx /workspace/Esp32TikoOS/firmware/components/datetime /workspace/Esp32TikoOS/firmware/components/desktop /workspace/Esp32TikoOS/firmware/components/desktop_settings /workspace/Esp32TikoOS/firmware/components/dialogs /workspace/esp-idf-5.4.1/components/driver /workspace/esp-idf-5.4.1/components/efuse /workspace/esp-idf-5.4.1/components/esp-tls /workspace/esp-idf-5.4.1/components/esp_adc /workspace/esp-idf-5.4.1/components/esp_app_format /workspace/esp-idf-5.4.1/components/esp_bootloader_format /workspace/esp-idf-5.4.1/components/esp_coex /workspace/esp-idf-5.4.1/components/esp_common /workspace/esp-idf-5.4.1/components/esp_driver_ana_cmpr /workspace/esp-idf-5.4.1/components/esp_driver_cam /workspace/esp-idf-5.4.1/components/esp_driver_dac /workspace/esp-idf-5.4.1/components/esp_driver_gpio /workspace/esp-idf-5.4.1/components/esp_driver_gptimer /workspace/esp-idf-5.4.1/components/esp_driver_i2c /workspace/esp-idf-5.4.1/components/esp_driver_i2s /workspace/esp-idf-5.4.1/components/esp_driver_isp /workspace/esp-idf-5.4.1/components/esp_driver_jpeg /workspace/esp-idf-5.4.1/components/esp_driver_ledc /workspace/esp-idf-5.4.1/components/esp_driver_mcpwm /workspace/esp-idf-5.4.1/components/esp_driver_parlio /workspace/esp-idf-5.4.1/components/esp_driver_pcnt /workspace/esp-idf-5.4.1/components/esp_driver_ppa /workspace/esp-idf-5.4.1/components/esp_driver_rmt /workspace/esp-idf-5.4.1/components/esp_driver_sdio /workspace/esp-idf-5.4.1/components/esp_driver_sdm /workspace/esp-idf-5.4.1/components/esp_driver_sdmmc /workspace/Esp32TikoOS/firmware/components/esp_driver_sdspi /workspace/esp-idf-5.4.1/components/esp_driver_spi /workspace/esp-idf-5.4.1/components/esp_driver_touch_sens /workspace/esp-idf-5.4.1/components/esp_driver_tsens /workspace/esp-idf-5.4.1/components/esp_driver_uart /workspace/esp-idf-5.4.1/components/esp_driver_usb_serial_jtag /workspace/esp-idf-5.4.1/components/esp_eth /workspace/esp-idf-5.4.1/components/esp_event /workspace/esp-idf-5.4.1/components/esp_gdbstub /workspace/esp-idf-5.4.1/components/esp_hid /workspace/esp-idf-5.4.1/components/esp_http_client /workspace/esp-idf-5.4.1/components/esp_http_server /workspace/esp-idf-5.4.1/components/esp_https_ota /workspace/esp-idf-5.4.1/components/esp_https_server /workspace/esp-idf-5.4.1/components/esp_hw_support /workspace/esp-idf-5.4.1/components/esp_lcd /workspace/esp-idf-5.4.1/components/esp_local_ctrl /workspace/esp-idf-5.4.1/components/esp_mm /workspace/esp-idf-5.4.1/components/esp_netif /workspace/esp-idf-5.4.1/components/esp_netif_stack /workspace/esp-idf-5.4.1/components/esp_partition /workspace/esp-idf-5.4.1/components/esp_phy /workspace/esp-idf-5.4.1/components/esp_pm /workspace/esp-idf-5.4.1/components/esp_psram /workspace/esp-idf-5.4.1/components/esp_ringbuf /workspace/esp-idf-5.4.1/components/esp_rom /workspace/esp-idf-5.4.1/components/esp_security /workspace/esp-idf-5.4.1/components/esp_system /workspace/esp-idf-5.4.1/components/esp_timer /workspace/esp-idf-5.4.1/components/esp_vfs_console /workspace/esp-idf-5.4.1/components/esp_wifi /workspace/esp-idf-5.4.1/components/espcoredump /workspace/Esp32TikoOS/firmware/components/espressif__esp_tinyusb /workspace/Esp32TikoOS/firmware/components/espressif__led_strip /workspace/Esp32TikoOS/firmware/components/espressif__mdns /workspace/Esp32TikoOS/firmware/components/espressif__tinyusb /workspace/esp-idf-5.4.1/components/esptool_py /workspace/esp-idf-5.4.1/components/fatfs /workspace/Esp32TikoOS/firmware/components/flipper_application /workspace/Esp32TikoOS/firmware/components/flipper_format /workspace/Esp32TikoOS/firmware/components/flipper_protobuf /workspace/esp-idf-5.4.1/components/freertos /workspace/Esp32TikoOS/firmware/components/furi /workspace/Esp32TikoOS/firmware/components/furi_ble /workspace/Esp32TikoOS/firmware/components/furi_hal /workspace/Esp32TikoOS/firmware/components/fw_ota /workspace/Esp32TikoOS/firmware/components/gui /workspace/esp-idf-5.4.1/components/hal /workspace/esp-idf-5.4.1/components/heap /workspace/Esp32TikoOS/firmware/components/heatshrink /workspace/esp-idf-5.4.1/components/http_parser /workspace/esp-idf-5.4.1/components/idf_test /workspace/esp-idf-5.4.1/components/ieee802154 /workspace/Esp32TikoOS/firmware/components/infrared /workspace/Esp32TikoOS/firmware/components/input /workspace/esp-idf-5.4.1/components/json /workspace/Esp32TikoOS/firmware/components/lfrfid /workspace/Esp32TikoOS/firmware/components/libsmb2 /workspace/Esp32TikoOS/firmware/components/loader /workspace/Esp32TikoOS/firmware/components/locale /workspace/esp-idf-5.4.1/components/log /workspace/esp-idf-5.4.1/components/lwip /workspace/Esp32TikoOS/firmware/main /workspace/esp-idf-5.4.1/components/mbedtls /workspace/Esp32TikoOS/firmware/components/mjs /workspace/Esp32TikoOS/firmware/components/mlib /workspace/esp-idf-5.4.1/components/mqtt /workspace/Esp32TikoOS/firmware/components/music_worker /workspace/Esp32TikoOS/firmware/components/nanopb /workspace/esp-idf-5.4.1/components/newlib /workspace/Esp32TikoOS/firmware/components/nfc /workspace/Esp32TikoOS/firmware/components/notification /workspace/esp-idf-5.4.1/components/nvs_flash /workspace/esp-idf-5.4.1/components/nvs_sec_provider /workspace/esp-idf-5.4.1/components/openthread /workspace/esp-idf-5.4.1/components/partition_table /workspace/esp-idf-5.4.1/components/perfmon /workspace/esp-idf-5.4.1/components/protobuf-c /workspace/esp-idf-5.4.1/components/protocomm /workspace/esp-idf-5.4.1/components/pthread /workspace/Esp32TikoOS/firmware/components/rpc /workspace/esp-idf-5.4.1/components/rt /workspace/esp-idf-5.4.1/components/sdmmc /workspace/esp-idf-5.4.1/components/soc /workspace/esp-idf-5.4.1/components/spi_flash /workspace/esp-idf-5.4.1/components/spiffs /workspace/Esp32TikoOS/firmware/components/storage /workspace/Esp32TikoOS/firmware/components/subghz /workspace/esp-idf-5.4.1/components/tcp_transport /workspace/Esp32TikoOS/firmware/components/tiko /workspace/Esp32TikoOS/firmware/components/toolbox /workspace/esp-idf-5.4.1/components/touch_element /workspace/Esp32TikoOS/firmware/components/u8g2 /workspace/esp-idf-5.4.1/components/ulp /workspace/esp-idf-5.4.1/components/unity /workspace/esp-idf-5.4.1/components/usb /workspace/esp-idf-5.4.1/components/vfs /workspace/esp-idf-5.4.1/components/wear_levelling /workspace/Esp32TikoOS/firmware/components/wifi /workspace/esp-idf-5.4.1/components/wifi_provisioning /workspace/esp-idf-5.4.1/components/wpa_supplicant /workspace/esp-idf-5.4.1/components/xtensa
+-- Configuring done (4.2s)
+-- Generating done (1.5s)
+-- Build files have been written to: /workspace/Esp32TikoOS/firmware/build-tiko
+[1/6] Building C object esp-idf/main/CMakeFiles/__idf_main.dir/generated/applications.c.obj
+[2/6] Linking C static library esp-idf/main/libmain.a
+[3/6] Generating ld/sections.ld
+NOTE: /workspace/esp-idf-5.4.1/components/bt/host/nimble/Kconfig.in:103: BT_NIMBLE_L2CAP_ENHANCED_COC: 'default 0' is not a valid bool value (only 'y' and 'n' are allowed). Value is treated as 'n'.
+NOTE: /workspace/esp-idf-5.4.1/components/bt/host/nimble/Kconfig.in:515: BT_NIMBLE_MESH_PROVISIONER: 'default 0' is not a valid bool value (only 'y' and 'n' are allowed). Value is treated as 'n'.
+NOTE: /workspace/esp-idf-5.4.1/components/fatfs/Kconfig:230: FATFS_PRINT_LLI: 'default 0' is not a valid bool value (only 'y' and 'n' are allowed). Value is treated as 'n'.
+NOTE: /workspace/esp-idf-5.4.1/components/fatfs/Kconfig:235: FATFS_PRINT_FLOAT: 'default 0' is not a valid bool value (only 'y' and 'n' are allowed). Value is treated as 'n'.
+NOTE: /workspace/esp-idf-5.4.1/components/bootloader/Kconfig.projbuild:441: Deprecation notice: hex literal '0' without '0x' prefix detected. In the next major version, hex literals will be required to have a '0x' prefix.
+NOTE: /workspace/esp-idf-5.4.1/components/bootloader/Kconfig.projbuild:481: Deprecation notice: hex literal '0' without '0x' prefix detected. In the next major version, hex literals will be required to have a '0x' prefix.
+NOTE: /workspace/esp-idf-5.4.1/components/bt/host/nimble/Kconfig.in:277: Deprecation notice: hex literal '0' without '0x' prefix detected. In the next major version, hex literals will be required to have a '0x' prefix.
+NOTE: /workspace/esp-idf-5.4.1/components/esp_mm/Kconfig:20: Deprecation notice: hex literal '0' without '0x' prefix detected. In the next major version, hex literals will be required to have a '0x' prefix.
+NOTE: /workspace/esp-idf-5.4.1/components/esp_system/./port/soc/esp32s3/Kconfig.memory:21: Deprecation notice: hex literal '0' without '0x' prefix detected. In the next major version, hex literals will be required to have a '0x' prefix.
+NOTE: /workspace/esp-idf-5.4.1/components/openthread/Kconfig:69: Deprecation notice: hex literal '0' without '0x' prefix detected. In the next major version, hex literals will be required to have a '0x' prefix.
+[4/6] Linking CXX executable TikoOS.elf
+[5/6] Generating binary image from built executable
+WARNING: Deprecated: Option '--flash_mode' is deprecated. Use '--flash-mode' instead.
+WARNING: Deprecated: Option '--flash_freq' is deprecated. Use '--flash-freq' instead.
+WARNING: Deprecated: Option '--flash_size' is deprecated. Use '--flash-size' instead.
+esptool v5.6.0
+Creating ESP32-S3 image...
+Merged 3 ELF sections.
+Successfully created ESP32-S3 image.
+Generated /workspace/Esp32TikoOS/firmware/build-tiko/TikoOS.bin
+[6/6] cd /workspace/Esp32TikoOS/firmware/build-tiko/esp-idf/esptool_py && /workspace/idf-tools/python_env/idf5.4_py3.12_env/bin/python /workspace/esp-idf-5.4.1/components/partition_table/check_sizes.py --offset 0x8000 partition --type app /workspace/Esp32TikoOS/firmware/build-tiko/partition_table/partition-table.bin /workspace/Esp32TikoOS/firmware/build-tiko/TikoOS.bin
+TikoOS.bin binary size 0x2917a0 bytes. Smallest app partition is 0x400000 bytes. 0x16e860 bytes (36%) free.
+TikoOS native build: SUCCESS

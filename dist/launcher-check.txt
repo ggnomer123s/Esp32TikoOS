@@ -1,0 +1,4 @@
+CONFIG_TIKO_LAUNCHER_APP=y
+App image only; no merged factory image.
+In-app OTA object imports no app-slot writing API.
+Bootloader and partition table are not distributed or flashed.

@@ -1,0 +1,101 @@
+{
+    "version": "1.2",
+    "total_size": 2692900,
+    "layout": [
+        {
+            "name": "Flash Code",
+            "total": 0,
+            "used": 1937654,
+            "free": 0,
+            "parts": {
+                ".text": {
+                    "size": 1937654
+                }
+            }
+        },
+        {
+            "name": "Flash Data",
+            "total": 0,
+            "used": 576260,
+            "free": 0,
+            "parts": {
+                ".rodata": {
+                    "size": 576004
+                },
+                ".appdesc": {
+                    "size": 256
+                }
+            }
+        },
+        {
+            "name": "DIRAM",
+            "total": 341760,
+            "used": 196715,
+            "free": 145045,
+            "parts": {
+                ".text": {
+                    "size": 132055
+                },
+                ".bss": {
+                    "size": 34400
+                },
+                ".data": {
+                    "size": 30260
+                }
+            }
+        },
+        {
+            "name": "External RAM",
+            "total": 0,
+            "used": 28008,
+            "free": 0,
+            "parts": {
+                ".bss": {
+                    "size": 28008
+                }
+            }
+        },
+        {
+            "name": "IRAM",
+            "total": 16384,
+            "used": 16383,
+            "free": 1,
+            "parts": {
+                ".text": {
+                    "size": 15356
+                },
+                ".vectors": {
+                    "size": 1027
+                }
+            }
+        },
+        {
+            "name": "RTC FAST",
+            "total": 8192,
+            "used": 312,
+            "free": 7880,
+            "parts": {
+                ".text": {
+                    "size": 256
+                },
+                ".force_fast": {
+                    "size": 32
+                },
+                ".rtc_reserved": {
+                    "size": 24
+                }
+            }
+        },
+        {
+            "name": "RTC SLOW",
+            "total": 8192,
+            "used": 4,
+            "free": 8188,
+            "parts": {
+                ".rtc_noinit": {
+                    "size": 4
+                }
+            }
+        }
+    ]
+}

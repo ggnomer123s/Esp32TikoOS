@@ -1,0 +1,150 @@
+# Board selection: pass -DFLIPPER_BOARD=<board_name> to idf.py build
+# Available boards (see boards/ directory and targets/ directory):
+#   waveshare_c6_1.9        - Waveshare ESP32-C6-LCD-1.9 (default, touch input)
+#   waveshare_c6_1.47       - Waveshare ESP32-C6-LCD-1.47 (touch input + IMU)
+#   lilygo_t_embed_cc1101   - LilyGo T-Embed CC1101 (ESP32-S3, encoder input, CC1101/NFC/IR)
+#   DIY                     - Custom ESP32-S3 build, push-button input, pins set in Pinout.txt
+#   paradoxt                - Paradoxt (ESP32-S3, 6-button D-pad, CC1101/NRF24/NFC/IR, BQ25896)
+if(NOT DEFINED FLIPPER_BOARD)
+    set(FLIPPER_BOARD "waveshare_c6_1.9" CACHE STRING "Target board for Flipper ESP32 port")
+endif()
+message(STATUS "Flipper board: ${FLIPPER_BOARD}")
+
+# Only these boards are set up and checked for dual-core (their
+# sdkconfig.defaults.<board> turn it on). Any other board must stay
+# single-core: catch a shared/stale sdkconfig leaking dual-core into it.
+set(FURI_SMP_BOARDS "lilygo_t_embed_cc1101" "paradoxt")
+if(NOT CMAKE_BUILD_EARLY_EXPANSION AND DEFINED CONFIG_FREERTOS_UNICORE
+   AND NOT CONFIG_FREERTOS_UNICORE AND NOT FLIPPER_BOARD IN_LIST FURI_SMP_BOARDS)
+    message(FATAL_ERROR
+        "Board '${FLIPPER_BOARD}' must be built single-core (CONFIG_FREERTOS_UNICORE=y). "
+        "This sdkconfig was probably generated for another board: build with "
+        "-DSDKCONFIG=<build_dir>/sdkconfig.")
+endif()
+
+# DIY board: generate board_DIY.h from Pinout.txt
+if(FLIPPER_BOARD STREQUAL "DIY")
+    find_package(Python3 REQUIRED COMPONENTS Interpreter)
+    set(DIY_PINOUT "${CMAKE_CURRENT_LIST_DIR}/../../Pinout.txt")
+    set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${DIY_PINOUT}")
+    execute_process(
+        COMMAND ${Python3_EXECUTABLE} "${CMAKE_CURRENT_LIST_DIR}/../../tools/gen_diy_board.py" "${DIY_PINOUT}"
+        RESULT_VARIABLE DIY_GEN_RES OUTPUT_VARIABLE DIY_GEN_OUT ERROR_VARIABLE DIY_GEN_ERR)
+    if(NOT DIY_GEN_RES EQUAL 0)
+        message(FATAL_ERROR "Invalid Pinout.txt:\n${DIY_GEN_ERR}")
+    endif()
+endif()
+
+set(FURI_HAL_SRCS
+    "furi_hal.c"
+    "furi_hal_bw16_i2c.c"
+    "furi_hal_i2c.c"
+    "furi_hal_board_info.c"
+    "furi_hal_cortex.c"
+    "furi_hal_memory.c"
+    "furi_hal_rtc.c"
+    "furi_hal_power.c"
+    "furi_hal_power_sleep.c"
+    "furi_hal_reboot_combo.c"
+    "furi_hal_debug.c"
+    "furi_hal_interrupt.c"
+    "furi_hal_bt.c"
+    "furi_hal_crypto.c"
+    "furi_hal_flash.c"
+    "furi_hal_info.c"
+    "furi_hal_region.c"
+    "furi_hal_version.c"
+    "furi_hal_gpio.c"
+    "furi_hal_resources.c"
+    "furi_hal_usb.c"
+    "furi_hal_usb_cdc.c"
+    "furi_hal_light.c"
+    "furi_hal_vibro.c"
+    "furi_hal_speaker.c"
+    "furi_hal_spi_bus.c"
+    "furi_hal_spi.c"
+    "furi_hal_subghz.c"
+    "furi_hal_nfc.c"
+    "furi_hal_random.c"
+    "furi_hal_sd.c"
+    "furi_hal_touch.c"
+    "furi_hal_infrared.c"
+    "furi_hal_rfid.c"
+    "furi_hal_shared_pins.c"
+    "furi_hal_uart_shared.c"
+    "furi_hal_bw16_guard.c"
+    "furi_hal_bq27220.c"
+    "furi_hal_bq25896.c"
+    "furi_hal_ina219.c"
+    "fatfs_compat.c"
+)
+
+# NFC front-end selection. The stock PN532/I2C backend lives in furi_hal_nfc.c;
+# boards that use the ST25R3916 over SPI need the extra driver and technology
+# files listed below (and furi_hal_nfc.c compiles to a stub for them).
+set(FURI_HAL_ST25R3916_BOARDS fatalcore)
+if(FLIPPER_BOARD IN_LIST FURI_HAL_ST25R3916_BOARDS)
+    list(APPEND FURI_HAL_SRCS
+        "furi_hal_nfc_st25r3916.c"
+        "furi_hal_nfc_event.c"
+        "furi_hal_nfc_irq.c"
+        "furi_hal_nfc_timer.c"
+        "furi_hal_nfc_iso14443a.c"
+        "furi_hal_nfc_iso14443b.c"
+        "furi_hal_nfc_iso15693.c"
+        "furi_hal_nfc_felica.c"
+        "st25r3916.c"
+        "st25r3916_reg.c"
+    )
+endif()
+
+#OLED MOD
+if(FLIPPER_BOARD STREQUAL "thormini")
+    list(APPEND FURI_HAL_SRCS "furi_hal_display_sh1106.c")
+else()
+     list(APPEND FURI_HAL_SRCS "furi_hal_display.c")
+endif()
+
+
+set(FURI_HAL_REQUIRES
+    furi toolbox input driver esp_lcd fatfs sdmmc datetime
+    ble_hid ble_serial ble_profile furi_ble flipper_protobuf
+    esp_adc esp_driver_rmt esp_driver_i2s nvs_flash mbedtls efuse esp_hw_support
+    app_update esp_partition esp_app_format espressif__led_strip
+)
+
+# HID backend: TinyUSB on SoCs with USB-OTG, stub elsewhere.
+if(IDF_TARGET STREQUAL "esp32s3")
+    list(APPEND FURI_HAL_SRCS
+        "furi_hal_usb_hid_tinyusb.c"
+        "furi_hal_usb_tinyusb_composite.c"
+        "furi_hal_usb_msc.c"
+        "furi_hal_usb_u2f.c"
+    )
+    list(APPEND FURI_HAL_REQUIRES espressif__esp_tinyusb)
+elseif(IDF_TARGET STREQUAL "esp32s2")
+    list(APPEND FURI_HAL_SRCS
+        "furi_hal_usb_hid_tinyusb.c"
+        "furi_hal_usb_tinyusb_composite.c"
+        "furi_hal_usb_msc.c"
+    )
+    list(APPEND FURI_HAL_REQUIRES espressif__esp_tinyusb)
+else()
+    list(APPEND FURI_HAL_SRCS "furi_hal_usb_hid_stub.c")
+endif()
+
+idf_component_register(
+    SRCS ${FURI_HAL_SRCS}
+    INCLUDE_DIRS "." ".." "../.." "boards"
+    REQUIRES ${FURI_HAL_REQUIRES}
+)
+
+# Set board include path as compile definition
+target_compile_definitions(${COMPONENT_LIB} PUBLIC
+    BOARD_INCLUDE="board_${FLIPPER_BOARD}.h"
+)
+
+target_compile_options(${COMPONENT_LIB} PRIVATE
+    -Wno-error=implicit-function-declaration
+    -Wno-error=builtin-declaration-mismatch
+)

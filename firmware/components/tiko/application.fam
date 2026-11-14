@@ -1,0 +1,10 @@
+App(
+    appid="tiko",
+    name="TikoOS",
+    apptype=FlipperAppType.MENUEXTERNAL,
+    entry_point="tiko_app",
+    requires=["gui", "storage", "wifi"],
+    stack_size=24 * 1024,
+    icon="A_FileManager_14",
+    order=5,
+)

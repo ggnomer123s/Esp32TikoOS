@@ -1,0 +1,5 @@
+#pragma once
+#define BOARD_PIN_ENCODER_A 4
+#define BOARD_PIN_ENCODER_B 5
+#define BOARD_PIN_ENCODER_BTN 0
+#define BOARD_PIN_BUTTON_KEY 6

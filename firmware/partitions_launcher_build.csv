@@ -1,0 +1,4 @@
+# Build-time size check only. Never flash this table over Launcher.
+# Runtime uses the existing Launcher's partition table and bootloader.
+nvs,data,nvs,0x9000,0x5000,
+app,app,factory,0x10000,0x400000,
